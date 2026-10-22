@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { reportFromRecords, circledKinds, needsReport } from '../public/model.js';
-import { renderSheet, fitSize } from '../public/form.js';
+import { readFileSync } from 'node:fs';
+import { renderSheet, layoutAttach, HB_FAMILY } from '../public/form.js';
 
 const rec = over => ({ id: 'x', no: 18, name: 'LI SHIYU', kind: '결석', cause: '질병', start: '2026-03-10', end: '2026-03-10',
   period: '', days: 1, reason: '두통', docs: ['진료확인서'], ...over });
@@ -50,9 +51,21 @@ test('신고서 그리기: 체크·동그라미·빈 보호자 칸·이름 이�
   assert.ok(html.includes('A&lt;b&gt;'));
 });
 
-test('긴 글은 빈칸에 맞게 글자 크기를 줄인다', () => {
-  assert.equal(fitSize('두통', 100, 12), 12);
-  assert.ok(fitSize('아주 긴 사유가 들어가서 빈칸을 넘치는 경우를 확인합니다 정말로 깁니다', 378, 12) < 12);
+test('첨부 줄나눔: 원본 예시 3과 같은 자리에서 나뉘고 둘째 줄은 "(" 아래', () => {
+  const hb = ch => (/[가-힣]/.test(ch) ? 0.97 : 0.31); // 함초롬돋움 Bold 실측: 한글 11.64/12pt, 괄호·마침표 ≈ 0.3
+  const { lines, size } = layoutAttach('담임확인서(상기명 학생은 심장질환 관련 건강검진을 하였고 관련 서류를 가져오라고 했으나 분실했다고 함. 할머님과 연락 후 당일 건강검진을 하러 간 것을 확인함.)', hb);
+  const text = l => l.items.filter(x => typeof x === 'string').join('');
+  assert.equal(size, 12);
+  assert.deepEqual(lines.map(l => l.x), [138.36, 196.56, 196.56]);
+  assert.ok(text(lines[0]).endsWith('서류를'));
+  assert.ok(text(lines[1]).startsWith('가져오라고') && text(lines[1]).endsWith('건'));
+  assert.equal(layoutAttach('').lines.length, 0);
+  // 너무 길면 3줄에 맞게 글자를 줄인다
+  assert.ok(layoutAttach('진료확인서 '.repeat(40), hb).size < 12);
+});
+
+test('첨부 줄나눔에 쓰는 글꼴이 sheet.css와 같다', () => {
+  assert.ok(readFileSync(new URL('../public/sheet.css', import.meta.url), 'utf8').includes(HB_FAMILY));
 });
 
 import { groupForReports } from '../public/model.js';

@@ -1,200 +1,347 @@
 /**
- * 결석신고서 A4 한 장을 HTML 문자열로 그린다 — DOM·Firebase 의존 없음.
+ * 결석신고서 A4 한 장을 그린다 — Firebase 의존 없음.
+ * 브라우저에서는 첨부 줄나눔을 위해 canvas로 글자 폭만 잰다(Node 테스트에서는 어림값).
  *
- * 좌표는 전부 pt(1/72인치)이고 원본 한글 양식을 PDF로 저장한 파일에서
- * 글자마다 측정한 값이다(pdftotext -bbox). 글자를 단어 단위로 제자리에
- * 못박아 두기 때문에, 출력하는 컴퓨터에 굴림·함초롬돋움이 없어 대체
- * 글꼴로 나오더라도 줄이 밀리거나 칸이 어긋나지 않는다.
+ * 한 장 전체가 SVG 하나다. 좌표는 pt(1/72인치)이고 원본 한글 양식을 PDF로 저장한 파일에서 읽은 값이다.
+ *  - 글자는 기준선(baseline) y에 놓는다. HTML 글자처럼 글꼴의 위아래 여백에 따라 줄 높이가
+ *    달라지지 않는다 — 어느 컴퓨터·브라우저에서 출력해도 줄 높이가 원본과 같다.
+ *  - 선도 SVG다. CSS 테두리는 0.36pt 선이 화면 픽셀(1px = 0.75pt)로 굵어져 출력된다.
+ *  - 값이 없는 고정 글자는 글자마다 원본 x에 놓는다.
+ *  - 값이 들어가는 줄은 한글처럼 "글자 + 빈칸"으로 이어 그린다. 빈칸 하나는 언제나 글자 크기의
+ *    절반이다(원본의 모든 간격이 정확히 그 배수). 한글에서 값을 치면 뒤 글자가 밀리므로,
+ *    원본과 같은 글꼴이면 위치도 원본과 같다. 빈칸 개수는 원본 예시 신고서들에서 읽었다(줄마다 주석).
+ *  - 첨부는 한글처럼 줄을 나눈다(한글은 글자 단위, 영문·숫자는 단어 단위). 줄 수만큼 아래 칸이 내려간다.
  *
- * 입력값은 측정한 빈칸(slot) 안에 넣는다. 월·일·교시는 단위 글자 바로
- * 앞에 오른쪽 정렬, 이름·날짜는 가운데 정렬 — 예시 신고서들이 그렇게 쓰여 있다.
- *
- * 글꼴 구분(선생님 지정):
- *   g  — 굴림
- *   hb — 함초롬돋움 굵게 (1. 기간 ~ 2. 사유, 1. 확인방법 ~ 2. 첨부)
- *   hm — 함초롬바탕 (사유명 안내 줄)
+ * 글꼴·크기·색은 원본 PDF 안의 데이터를 그대로 읽은 값이다(눈대중 아님):
+ *   g   — 굴림. 한글(HWP)은 굴림을 "채우기 + 윤곽선(글자 크기의 1/100)"으로 찍는다
+ *   hb  — 함초롬돋움 Bold (1. 기간 ~ 2. 사유, 1. 확인방법 ~ 2. 첨부, 입력값 포함)
+ *   hmb — 함초롬바탕 Bold 9.96pt (※ 사유명 안내 줄, "감염병(종류)"는 빨강 #ff0000)
+ *   dot — "출석인정 ․ 질병" 사이 점: 원본은 한컴돋움의 ․(U+2024). 한컴돋움이 없으면 굴림 ·
+ *   선  — 0.36pt(사유명 밑줄·동그라미 0.48pt), 절취선은 지름 0.96pt 점을 1.2pt 간격으로
  */
 import { parts } from './dates.js';
 import { circledKinds } from './model.js';
 
-// [x, y, 줄높이, 글자크기, 글자, 글꼴]
-const STATIC = [[421.3,63.1,11.0,11,"계","g"],[369.8,68.9,11.0,11,"결","g"],[478.2,63.1,11.0,11,"학년부장","g"],[369.8,104.2,11.0,11,"재","g"],[163.8,144.3,17.0,17,"(","g"],[178.6,144.3,17.0,17,"결석","g"],[212.7,144.3,17.0,17,",","g"],[226.8,144.3,17.0,17,"지각","g"],[260.8,144.3,17.0,17,",","g"],[274.8,144.3,17.0,17,"조퇴","g"],[308.8,144.3,17.0,17,",","g"],[323.1,144.3,17.0,17,"결과","g"],[365.6,144.3,17.0,17,")","g"],[380.3,144.3,17.0,17,"신고서","g"],[361.0,185.1,12.9,13,"제","g"],[399.8,185.1,12.9,13,"학년","g"],[458.3,185.1,12.9,13,"반","g"],[510.1,185.1,12.9,13,"번","g"],[364.1,206.0,12.9,13,"성","g"],[383.7,206.0,12.9,13,"명","g"],[403.1,206.0,12.9,13,":","g"],[89.5,234.0,12.0,12,"본인은","g"],[129.8,234.0,12.0,12,"다음과","g"],[170.2,234.0,12.0,12,"같이","g"],[199.0,234.0,12.0,12,"(","g"],[209.0,234.0,12.0,12,"출석인정","g"],[260.9,234.0,12.0,12,"·","g"],[268.7,234.0,12.0,12,"질병","g"],[297.5,234.0,12.0,12,")","g"],[307.6,234.0,12.0,12,"(","g"],[311.9,234.0,12.0,12,"으","g"],[323.4,234.0,12.0,12,")","g"],[327.7,234.0,12.0,12,"로","g"],[345.0,234.0,12.0,12,"(","g"],[355.1,234.0,12.0,12,"결석","g"],[383.9,234.0,12.0,12,"·","g"],[391.7,234.0,12.0,12,"지각","g"],[420.5,234.0,12.0,12,"·","g"],[428.2,234.0,12.0,12,"조퇴","g"],[457.0,234.0,12.0,12,"·","g"],[464.8,234.0,12.0,12,"결과","g"],[493.6,234.0,12.0,12,")","g"],[83.5,253.2,12.0,12,"하였","g"],[107.5,253.2,12.0,12,"(","g"],[112.1,253.2,12.0,12,"겠","g"],[124.1,253.2,12.0,12,")","g"],[128.6,253.2,12.0,12,"기에","g"],[158.6,253.2,12.0,12,"보호자","g"],[200.6,253.2,12.0,12,"연서로","g"],[242.6,253.2,12.0,12,"신고합니다","g"],[302.6,253.2,12.0,12,".","g"],[87.1,272.4,10.0,10,"※","g"],[102.1,272.4,10.0,10,"해당하는","g"],[147.1,272.4,10.0,10,"곳에","g"],[172.2,272.4,10.0,10,"○","g"],[187.2,272.4,10.0,10,"합니다.","g"],[90.0,294.8,15.6,12,"1.","hb"],[105.8,294.8,15.6,12,"기간","hb"],[135.1,294.8,15.6,12,"(","hb"],[139.0,294.8,15.6,12,"해당란에","hb"],[191.5,294.8,15.6,12,"☑","hb"],[203.2,294.8,15.6,12,")","hb"],[125.2,314.0,15.6,12,"지각","hb"],[180.8,314.0,15.6,12,"년","hb"],[216.5,314.0,15.6,12,"월","hb"],[258.1,314.0,15.6,12,"일","hb"],[275.8,314.0,15.6,12,"(","hb"],[303.6,314.0,15.6,12,"교시","hb"],[326.9,314.0,15.6,12,")","hb"],[336.6,314.0,15.6,12,"등교","hb"],[125.2,338.0,15.6,12,"조퇴","hb"],[180.8,338.0,15.6,12,"년","hb"],[216.5,338.0,15.6,12,"월","hb"],[258.1,338.0,15.6,12,"일","hb"],[275.8,338.0,15.6,12,"(","hb"],[303.6,338.0,15.6,12,"교시","hb"],[326.9,338.0,15.6,12,")","hb"],[336.6,338.0,15.6,12,"부터","hb"],[125.2,362.0,15.6,12,"결과","hb"],[180.8,362.0,15.6,12,"년","hb"],[216.5,362.0,15.6,12,"월","hb"],[258.1,362.0,15.6,12,"일","hb"],[275.8,362.0,15.6,12,"(","hb"],[303.6,362.0,15.6,12,"교시","hb"],[326.9,362.0,15.6,12,")","hb"],[124.7,386.0,15.6,12,"결석","hb"],[180.4,386.0,15.6,12,"년","hb"],[216.0,386.0,15.6,12,"월","hb"],[257.6,386.0,15.6,12,"일","hb"],[281.3,386.0,15.6,12,"부터","hb"],[343.0,386.0,15.6,12,"년","hb"],[378.6,386.0,15.6,12,"월","hb"],[420.3,386.0,15.6,12,"일","hb"],[437.9,386.0,15.6,12,"까지","hb"],[467.2,386.0,15.6,12,"(","hb"],[500.9,386.0,15.6,12,"일","hb"],[512.6,386.0,15.6,12,")","hb"],[92.4,411.8,15.6,12,"2.","hb"],[108.2,411.8,15.6,12,"사유","hb"],[131.5,411.8,15.6,12,":","hb"],[141.4,411.8,15.6,12,"(","hb"],[523.1,411.8,15.6,12,")","hb"],[143.5,433.2,12.9,10,"※","hm"],[156.2,433.2,12.9,10,"사유명:","hm"],[193.7,433.2,12.9,10,"감염병","hm red"],[222.8,433.2,12.9,10,"(","hm red"],[226.0,433.2,12.9,10,"종류","hm red"],[245.4,433.2,12.9,10,")","hm red"],[248.6,433.2,12.9,10,",","hm"],[256.8,433.2,12.9,10,"감기","hm"],[276.2,433.2,12.9,10,",","hm"],[284.5,433.2,12.9,10,"생리통","hm"],[313.7,433.2,12.9,10,",","hm"],[321.8,433.2,12.9,10,"치과진료","hm"],[360.7,433.2,12.9,10,",","hm"],[368.9,433.2,12.9,10,"비자발급","hm"],[412.8,433.2,12.9,10,"등","hm"],[267.6,458.4,12.0,12,"년","g"],[315.6,458.4,12.0,12,"월","g"],[363.6,458.4,12.0,12,"일","g"],[335.5,485.5,12.0,12,"본","g"],[359.5,485.5,12.0,12,"인","g"],[473.5,485.5,12.0,12,"(","g"],[478.1,485.5,12.0,12,"인","g"],[490.1,485.5,12.0,12,")","g"],[335.5,509.5,12.0,12,"보호자","g"],[473.5,509.5,12.0,12,"(","g"],[478.1,509.5,12.0,12,"인","g"],[490.1,509.5,12.0,12,")","g"],[177.6,532.8,15.9,16,"관","g"],[209.5,532.8,15.9,16,"산","g"],[241.6,532.8,15.9,16,"중","g"],[273.5,532.8,15.9,16,"학","g"],[305.4,532.8,15.9,16,"교","g"],[337.5,532.8,15.9,16,"장","g"],[385.6,532.8,15.9,16,"귀하","g"],[246.6,562.3,17.0,17,"확","g"],[289.0,562.3,17.0,17,"인","g"],[331.6,562.3,17.0,17,"서","g"],[95.5,592.8,12.0,12,"위","g"],[113.5,592.8,12.0,12,"신고","g"],[143.5,592.8,12.0,12,"내용이","g"],[185.5,592.8,12.0,12,"사실과","g"],[227.5,592.8,12.0,12,"다름이","g"],[269.5,592.8,12.0,12,"없음을","g"],[311.5,592.8,12.0,12,"확인함","g"],[347.5,592.8,12.0,12,".","g"],[90.0,613.1,15.6,12,"1.","hb"],[105.8,613.1,15.6,12,"확인방법","hb"],[158.4,613.1,15.6,12,"(","hb"],[162.2,613.1,15.6,12,"해당란에","hb"],[214.8,613.1,15.6,12,"☑","hb"],[226.4,613.1,15.6,12,")","hb"],[125.2,632.3,15.6,12,"가정방문","hb"],[201.4,632.3,15.6,12,"전화연락","hb"],[145.9,650.3,15.6,12,"년","hb"],[181.6,650.3,15.6,12,"월","hb"],[223.2,650.3,15.6,12,"일","hb"],[270.8,650.3,15.6,12,"시","hb"],[282.5,650.3,15.6,12,",","hb"],[297.6,650.3,15.6,12,"대화자","hb"],[338.5,650.3,15.6,12,":","hb"],[125.2,671.9,15.6,12,"기","hb"],[160.8,671.9,15.6,12,"타","hb"],[178.4,671.9,15.6,12,":","hb"],[90.0,698.3,15.6,12,"2","hb"],[96.1,698.3,15.6,12,".","hb"],[105.4,698.3,15.6,12,"첨부","hb"],[128.6,698.3,15.6,12,":","hb"]];
+/** 고정 글자 [기준선 y, 크기, 글꼴, 글자, 글자마다 x] — 원본 빈 양식 그대로 */
+const STATIC = [
+  [72.6,11.04,"g","계학년부장",[421.32,478.18,489.22,500.26,511.19]],
+  [78.36,11.04,"g","결",[369.84]],
+  [113.64,11.04,"g","재",[369.84]],
+  [158.88,17.04,"g","(결석,지각,조퇴,결과)신고서",[163.8,178.56,195.6,212.71,226.79,243.66,260.76,274.84,291.88,308.82,323.06,340.11,365.56,380.32,397.36,414.4]],
+  [244.32,12.0,"g","본인은다음과같이(출석인정",[89.52,101.04,112.56,129.84,141.36,152.88,170.16,181.68,198.96,209.04,220.56,232.09,243.61]],
+  [244.32,12.0,"dot","․",[260.88]],
+  [244.32,12.0,"g","질병)(으)로(결석",[268.69,280.21,297.48,307.56,311.89,323.4,327.73,345.01,355.09,366.61]],
+  [244.32,12.0,"dot","․",[383.88]],
+  [244.32,12.0,"g","지각",[391.69,403.21]],
+  [244.32,12.0,"dot","․",[420.49]],
+  [244.32,12.0,"g","조퇴",[428.17,439.69]],
+  [244.32,12.0,"dot","․",[456.97]],
+  [244.32,12.0,"g","결과)",[464.77,476.29,493.57]],
+  [263.52,12.0,"g","하였(겠)기에보호자연서로신고합니다.",[83.52,95.52,107.52,112.08,124.08,128.64,140.64,158.64,170.64,182.64,200.64,212.64,224.65,242.65,254.65,266.65,278.65,290.65,302.65]],
+  [280.92,9.96,"g","※해당하는곳에○합니다.",[87.12,102.12,112.18,122.14,132.1,147.14,157.2,172.18,187.18,197.14,207.1,217.16]],
+  [307.68,12.0,"hb","1.기간(해당란에☑)",[90.0,96.6,105.84,117.48,135.12,138.96,150.6,162.24,173.88,191.52,203.16]],
+  [443.88,9.96,"hmb","※사유명:",[143.52,156.24,166.0,175.66,185.42]],
+  [443.88,9.96,"hmb red","감염병(종류)",[193.68,203.44,213.1,222.84,225.95,235.71,245.35]],
+  [443.88,9.96,"hmb",",감기,생리통,치과진료,비자발급등",[248.64,256.8,266.56,276.23,284.49,294.25,303.91,313.68,321.84,331.6,341.26,351.03,360.69,368.85,378.62,388.28,398.04,412.78]],
+  [546.48,15.96,"g","관산중학교장귀하",[177.6,209.52,241.6,273.52,305.44,337.53,385.57,401.53]],
+  [576.96,17.04,"g","확인서",[246.6,289.03,331.63]],
+  [603.12,12.0,"g","위신고내용이사실과다름이없음을확인함.",[95.52,113.52,125.52,143.52,155.52,167.52,185.52,197.52,209.52,227.52,239.53,251.53,269.53,281.53,293.53,311.53,323.53,335.53,347.53]],
+  [625.92,12.0,"hb","1.확인방법(해당란에☑)",[90.0,96.6,105.84,117.48,129.12,140.76,158.4,162.24,173.88,185.52,197.16,214.8,226.45]],
+  [645.12,12.0,"hb","가정방문전화연락",[125.16,136.8,148.44,160.08,201.36,213.0,224.64,236.28]],
+  [711.12,11.04,"hb","2",[90.01]],
+  [711.12,12.0,"hb",".첨부:",[96.12,105.36,117.0,128.64]],
+];
 
 /*
- * "2. 첨부:" 아래쪽(안내 문구·날짜·담임)은 첨부 내용이 몇 줄이냐에 따라
- * 통째로 내려간다. 그래서 절대 좌표가 아니라 첨부 문단 바로 뒤 블록 안의
- * 상대 좌표로 둔다. 기준점 BLOCK_TOP = 첨부 첫 줄 아래 끝.
+ * "2. 첨부:" 아래쪽(안내 문구·날짜·담임·틀 아랫선)은 첨부가 몇 줄이냐에 따라 통째로 내려간다.
+ * 아래 좌표는 첨부가 한 줄일 때 값이고, 늘어난 줄 수 × 줄 간격만큼 더한다.
  */
-const ATTACH_X = 137.4, ATTACH_TOP = 698.3, ATTACH_RIGHT = 535, ATTACH_LH = 19.2;
-const BLOCK_TOP = ATTACH_TOP - (ATTACH_LH - 15.6) / 2 + ATTACH_LH; // 715.7
-const FRAME = { left: 58, right: 537.5, top: 126, bottom: 782 };
-const MOVING = [[94.6,720.1,10.0,9,"※","g"],[107.9,720.1,10.0,9,"진료확인서","g"],[151.3,720.1,10.0,9,",","g"],[158.5,720.1,10.0,9,"약봉투","g"],[184.6,720.1,10.0,9,",","g"],[191.7,720.1,10.0,9,"공문이나","g"],[230.9,720.1,10.0,9,"내부결재","g"],[270.0,720.1,10.0,9,"서류","g"],[287.3,720.1,10.0,9,",","g"],[294.6,720.1,10.0,9,"출입국사무소","g"],[346.6,720.1,10.0,9,"(","g"],[349.9,720.1,10.0,9,"대사관","g"],[375.9,720.1,10.0,9,")","g"],[383.7,720.1,10.0,9,"증빙서류","g"],[418.4,720.1,10.0,9,"(","g"],[421.5,720.1,10.0,9,"여권사본","g"],[456.4,720.1,10.0,9,",","g"],[463.6,720.1,10.0,9,"사진","g"],[481.0,720.1,10.0,9,",","g"],[488.2,720.1,10.0,9,"영수증","g"],[518.5,720.1,10.0,9,"등","g"],[527.3,720.1,10.0,9,")","g"],[260.3,740.1,12.0,12,"년","g"],[308.3,740.1,12.0,12,"월","g"],[356.3,740.1,12.0,12,"일","g"],[341.5,762.9,12.0,12,"학급","g"],[371.5,762.9,12.0,12,"담임","g"],[479.5,762.9,12.0,12,"(","g"],[484.1,762.9,12.0,12,"인","g"],[496.1,762.9,12.0,12,")","g"]];
+const MOVING = [
+  [728.64,9.96,"g","※진료확인서,약봉투,공문이나내부결재서류,출입국사무소(대사관)증빙서류(여권사본,사진,영수증등)",[94.58,107.88,116.55,125.31,133.88,142.54,151.32,158.48,167.14,175.91,184.59,191.75,200.51,209.18,217.84,230.89,239.56,248.32,256.89,270.03,278.6,287.28,294.64,303.2,311.87,320.63,329.3,337.96,346.64,349.92,358.58,367.35,375.93,383.68,392.25,400.91,409.68,418.36,421.53,430.3,438.96,447.63,456.41,463.56,472.23,481.01,488.17,496.83,505.6,518.55,527.32]],
+];
 
-/** 위 문장의 동그라미 대상 단어 [x0, x1] (y는 234~246 공통) */
-const CIRCLE_WORDS = {
-  출석인정: [209.0, 255.6], 질병: [268.7, 292.2],
-  결석: [355.1, 378.6], 지각: [391.7, 415.2], 조퇴: [428.2, 451.7], 결과: [464.8, 488.3],
+const ATTACH = {
+  x: 138.36, y: 711.12, lineGap: 19.2, size: 12,
+  right: 536.0,  // 원본 예시 3: 533.3까지 쓴 줄은 들어가고 538.8까지 가야 하는 글자는 다음 줄로 넘어갔다
+  maxLines: 3,   // 4줄부터는 틀이 종이 밖으로 나간다 → 글자를 줄여 3줄에 맞춘다
 };
+const FRAME = { left: 58.20, right: 537.00, top: 126.24, bottom: 782.40, lineLeft: 58.08, lineRight: 537.24 };
 
-/** 1. 기간 각 줄의 y와 빈칸 [x0, x1] */
-const ROW_Y = { late: 314.0, early: 338.0, result: 362.0, absent: 386.0 };
-const ROW_BOX_X = { late: 107.5, early: 107.5, result: 107.5, absent: 107.0 };
-const ONE_DAY_SLOTS = { year: 154.4, month: [192.5, 216.5], day: [228.1, 258.1], period: [279.5, 303.6] };
-const ABSENT_SLOTS = {
-  year: 154.0, month: [192.0, 216.0], day: [227.6, 257.6],
-  endYear: 316.6, endMonth: [354.6, 378.6], endDay: [390.2, 420.3], days: [470.9, 500.9],
+/**
+ * 위 문장의 동그라미 [x0, x1] — 원본 예시 PDF의 타원 좌표 그대로(높이 229.44~250.08).
+ * 예시에 없던 지각·출석인정은 같은 방식(단어 가운데, 단어 폭 + 2.4pt)으로.
+ */
+const CIRCLES = {
+  출석인정: [208.1, 256.5], 질병: [266.40, 292.32],
+  결석: [355.92, 382.08], 지각: [390.49, 416.41], 조퇴: [425.88, 452.04], 결과: [463.56, 489.48],
 };
+const CIRCLE_Y = [229.44, 250.08];
+
+/** 첨부 줄나눔에 쓰는 글꼴 — sheet.css의 .hb와 같아야 한다(tests/model.test.mjs가 확인) */
+export const HB_FAMILY = '"함초롬돋움", "HCR Dotum", "HCRDotum", "Nanum Gothic", "NanumGothic", sans-serif';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-function at(x, y, h, size, text, cls, extra = '') {
-  return `<span class="t ${cls}" style="left:${x}pt;top:${y}pt;line-height:${h}pt;font-size:${size}pt;${extra}">${esc(text)}</span>`;
-}
-
-/** 빈칸 안에 정렬해서 넣기. 글이 빈칸보다 길면 글자 크기를 줄인다(최소 7pt). */
-function slot([x0, x1], y, h, size, text, cls, align = 'center') {
-  if (text === '' || text == null) return '';
-  const w = x1 - x0;
-  const fit = fitSize(String(text), w, size);
-  return `<span class="t ${cls}" style="left:${x0}pt;top:${y}pt;width:${w}pt;text-align:${align};line-height:${h}pt;font-size:${fit}pt;">${esc(text)}</span>`;
-}
-
-/** 한글 1자 ≈ 1em, 영문·숫자·공백 ≈ 0.55em 으로 어림한 글 폭(em) */
-function emWidth(text) {
-  let em = 0;
-  for (const ch of text) em += /[ᄀ-ᇿ㄰-㆏가-힣一-鿿]/.test(ch) ? 1 : 0.55;
-  return em;
-}
-
-/** 어림한 폭이 빈칸을 넘으면 글자 크기를 줄인다. */
-export function fitSize(text, width, size, min = 7) {
-  const em = emWidth(text);
-  if (em * size <= width) return size;
-  return Math.max(min, Math.floor((width / em) * 10) / 10);
-}
-
+const num = n => +n.toFixed(2);
+const len = v => String(v ?? '').length;
 const box = checked => (checked ? '☑' : '□');
 
-function hline(x0, x1, y, dashed = false) {
-  return `<i class="ln${dashed ? ' dash' : ''}" style="left:${x0}pt;top:${y}pt;width:${x1 - x0}pt;"></i>`;
-}
-function vline(x, y0, y1) {
-  return `<i class="ln v" style="left:${x}pt;top:${y0}pt;height:${y1 - y0}pt;"></i>`;
-}
+/** 굴림·한컴돋움은 윤곽선도 같이(원본 PDF 글자 모드 "채우기+윤곽선", 굵기 = 글자 크기/100) */
+const strokeAttr = (cls, size) => (/^(g|hd)\b/.test(cls) ? ` stroke-width="${num(size / 100)}"` : '');
 
-function ellipse(word) {
-  const [x0, x1] = CIRCLE_WORDS[word];
-  // 원본 동그라미: 글자보다 위아래로 넉넉하고 선이 가늘다
-  return `<i class="circle" style="left:${x0 - 3.5}pt;top:229pt;width:${x1 - x0 + 7}pt;height:22pt;"></i>`;
+/** 고정 글자 한 덩어리: 글자마다 원본 x */
+function fixed([y, size, cls, text, xs], dy = 0, opts = {}) {
+  if (cls === 'dot') {
+    cls = opts.haansoftDotum ? 'hd' : 'g';
+    text = opts.haansoftDotum ? '․' : '·';
+  }
+  return `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${xs.join(' ')}" y="${num(y + dy)}">${esc(text)}</text>`;
 }
 
 /**
- * @param {object} r 신고서(model.emptyReport 모양)
+ * 값이 들어가는 줄. items는 글자 조각과 빈칸 개수(숫자)의 목록이다.
+ * 빈칸 하나 = 글자 크기의 절반, 글자 조각 안의 공백도 빈칸 하나로 친다.
+ */
+function flow(x, y, size, cls, items, anchor = '') {
+  // 숫자는 빈칸 개수다 — 값(월·일 등)은 반드시 문자열로 넘긴다
+  const segs = [];
+  let gap = 0;
+  for (const it of items) {
+    if (typeof it === 'number') { gap += Math.max(0, it); continue; }
+    String(it ?? '').split(' ').forEach((t, i) => {
+      if (i) gap += 1;
+      if (!t) return;
+      if (!gap && segs.length) segs.at(-1)[1] += t;
+      else segs.push([gap, t]);
+      gap = 0;
+    });
+  }
+  if (!segs.length) return '';
+  const half = size / 2;
+  const body = esc(segs[0][1]) + segs.slice(1).map(([g, t]) => `<tspan dx="${num(g * half)}">${esc(t)}</tspan>`).join('');
+  return `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${num(x + segs[0][0] * half)}" y="${num(y)}"${anchor ? ` text-anchor="${anchor}"` : ''}>${body}</text>`;
+}
+
+/** 칸 n개 중 값이 차지하지 않은 만큼 빈칸 — 원본 예시: 값은 그 자리 빈칸을 한 글자에 하나씩 대신한다 */
+const fill = (n, v) => (v === '' || v == null ? [n] : [n - len(v), String(v)]);
+
+// ── 첨부 줄나눔 ──────────────────────────────────────
+
+const HANGUL = 'ᄀ-ᇿ㄰-㆏가-힣一-鿿豈-﫿';
+const TOKEN = new RegExp(` +|[${HANGUL}]|[^ ${HANGUL}]+`, 'g');
+/** 줄 첫머리에 올 수 없는 글자, 줄 끝에 올 수 없는 글자(한글의 기본 금칙) */
+const NO_START = /^[)\]}>.,:;!?%'"’”」』〉》…·․~]/;
+const NO_END = /[(\[{<‘“「『〈《]$/;
+
+/** 한글은 글자마다, 영문·숫자·기호는 붙은 덩어리마다 나눈다. sp = 앞 빈칸 수 */
+function tokenize(text) {
+  const out = [];
+  let sp = 0;
+  for (const [s] of text.matchAll(TOKEN)) {
+    if (s[0] === ' ') { sp += s.length; continue; }
+    const prev = out.at(-1);
+    if (prev && !sp && (NO_START.test(s) || NO_END.test(prev.t))) prev.t += s;
+    else out.push({ t: s, sp });
+    sp = 0;
+  }
+  return out;
+}
+
+/** 글자 폭(em). 브라우저면 실제 글꼴로 재고, 아니면 함초롬돋움 Bold 기준 어림값. */
+function makeMeasure() {
+  let ctx = null;
+  try {
+    if (typeof document !== 'undefined') {
+      ctx = document.createElement('canvas').getContext('2d');
+      ctx.font = `700 100px ${HB_FAMILY}`;
+      if ('fontKerning' in ctx) ctx.fontKerning = 'none';
+    }
+  } catch { ctx = null; }
+  const memo = new Map();
+  return ch => {
+    if (memo.has(ch)) return memo.get(ch);
+    const em = ctx ? ctx.measureText(ch).width / 100
+      : new RegExp(`[${HANGUL}]`).test(ch) ? 0.97 : /[()[\]{}.,:;'"]/.test(ch) ? 0.31 : 0.55;
+    memo.set(ch, em);
+    return em;
+  };
+}
+
+/**
+ * 첨부를 줄로 나눈다. 괄호 설명(담임확인서(상기명 학생은 …))이면 둘째 줄부터 "(" 아래에서 시작
+ * (원본 예시 3 그대로). 괄호 앞부분이 한 줄의 절반을 넘으면 그냥 첫 줄 시작 위치에 맞춘다.
+ * @returns {{ size, lineGap, lines: { x, items }[] }}
+ */
+export function layoutAttach(text, measure = makeMeasure()) {
+  text = String(text ?? '').trim();
+  if (!text) return { size: ATTACH.size, lineGap: ATTACH.lineGap, lines: [] };
+  let best;
+  for (const size of [12, 11.5, 11, 10.5, 10, 9.5, 9]) {
+    const w = s => [...s].reduce((a, ch) => a + (ch === ' ' ? 0.5 : measure(ch)), 0) * size;
+    const open = text.indexOf('(');
+    const headW = open > 0 ? w(text.slice(0, open)) : 0;
+    const indent = open > 0 && headW < (ATTACH.right - ATTACH.x) / 2 ? ATTACH.x + headW : ATTACH.x;
+    const lines = [];
+    let cur = { x: ATTACH.x, items: [], w: 0 };
+    const newLine = () => { lines.push(cur); cur = { x: indent, items: [], w: 0 }; };
+    const put = (sp, t, tw) => { cur.items.push(sp, t); cur.w += sp * size / 2 + tw; };
+    for (const { t, sp } of tokenize(text)) {
+      const tw = w(t);
+      if (cur.items.length && cur.x + cur.w + sp * size / 2 + tw > ATTACH.right) newLine();
+      const gap = cur.items.length ? sp : 0;  // 줄 첫머리 빈칸은 버린다(한글과 같음)
+      if (cur.x + cur.w + gap * size / 2 + tw <= ATTACH.right) { put(gap, t, tw); continue; }
+      // 한 줄보다 긴 덩어리(긴 영문·숫자)는 글자 단위로 자른다
+      let piece = '', pw = 0, g = gap;
+      for (const ch of t) {
+        const cw = w(ch);
+        if (piece && cur.x + cur.w + g * size / 2 + pw + cw > ATTACH.right) { put(g, piece, pw); newLine(); piece = ''; pw = 0; g = 0; }
+        piece += ch; pw += cw;
+      }
+      if (piece) put(g, piece, pw);
+    }
+    lines.push(cur);
+    best = { size, lineGap: num(ATTACH.lineGap * size / 12), lines };
+    if (lines.length <= ATTACH.maxLines) break;
+  }
+  return best;
+}
+
+// ── 선 ───────────────────────────────────────────────
+
+const L = (x1, y1, x2, y2, w = 0.36) => `<line x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" stroke-width="${w}"/>`;
+
+/** 결재란, 틀, 밑줄, 절취선, 동그라미 — 원본 PDF 좌표 그대로. shift = 첨부가 늘어난 만큼 */
+function drawLines(circled, shift) {
+  const [cy0, cy1] = CIRCLE_Y;
+  const bottom = FRAME.bottom + shift;
+  return `<g stroke="#000" fill="none">` +
+    L(360.48, 58.08, 537.24, 58.08) + L(390.00, 79.32, 537.24, 79.32) +
+    L(360.60, 58.08, 360.60, FRAME.top) + L(390.12, 58.08, 390.12, FRAME.top) + L(463.56, 58.08, 463.56, FRAME.top) +
+    L(FRAME.right, 58.08, FRAME.right, bottom) +
+    L(FRAME.left, FRAME.top, FRAME.left, bottom) +
+    L(FRAME.lineLeft, FRAME.top, FRAME.lineRight, FRAME.top) +
+    L(FRAME.lineLeft, bottom, FRAME.lineRight, bottom) +
+    L(87.12, 282.60, 220.56, 282.60) +
+    L(143.52, 445.92, 422.64, 445.92, 0.48) +
+    L(94.56, 730.32 + shift, 531.12, 730.32 + shift) +
+    `<line x1="58.02" y1="555.06" x2="537.6" y2="555.06" stroke-width="0.96" stroke-linecap="round" stroke-dasharray="0 1.2"/>` +
+    circled.map(w => {
+      const [x0, x1] = CIRCLES[w];
+      return `<ellipse class="circle" cx="${num((x0 + x1) / 2)}" cy="${num((cy0 + cy1) / 2)}" rx="${num((x1 - x0) / 2)}" ry="${num((cy1 - cy0) / 2)}" stroke-width="0.48"/>`;
+    }).join('') +
+    `</g>`;
+}
+
+/**
+ * @param {object} r 신고서(model.emptyReport 모양) + grade, cls
+ * @param {{ haansoftDotum?: boolean, measure?: (ch: string) => number }} opts
+ *   haansoftDotum: 이 기기에 한컴돋움이 있으면 true(원본과 같은 점 ․)
+ *   measure: 함초롬돋움 Bold 글자 폭(em) — 테스트용. 없으면 브라우저 canvas로 잰다
  * @returns {string} <div class="sheet">…</div>
  */
-export function renderSheet(r) {
+export function renderSheet(r, opts = {}) {
   const out = [];
   const baseYear = parts(r.written).y || parts(r.confirmedOn).y || '';
 
-  // ── 선: 결재란, 바깥 틀(위쪽), 절취선 ──
-  out.push(hline(360.5, 537.5, 58), hline(390, 537.5, 79));
-  out.push(vline(360.5, 58, 126.5), vline(390, 58, 126.5), vline(463.5, 58, 126.5), vline(537, 58, 126.5));
-  out.push(hline(87, 220.5, 282.5), hline(143.5, 422.5, 445.5), hline(58, 537.5, 554.75, true));
+  for (const run of STATIC) out.push(fixed(run, 0, opts));
 
-  for (const w of STATIC) out.push(at(...w));
+  // ── 학년·반·번호 (굴림 12.96) — 양식 "제····학년·····반······번"
+  //    예시 "제··2·학년··1·반···18·번", "…반··5·번" (번호 앞 빈칸 = 1 + 자릿수)
+  const g = r.grade, c = r.cls, n = r.no;
+  out.push(flow(360.96, 196.20, 12.96, 'g', [
+    '제', ...(g ? [2, String(g), 1] : [4]), '학년', ...(c ? [2, String(c), 1] : [5]), '반',
+    ...(n ? [1 + len(n), String(n), 1] : [6]), '번',
+  ]));
+  // ── 성명 — "성·명·:·이름"
+  out.push(flow(364.08, 217.08, 12.96, 'g', ['성', 1, '명', 1, ':', 1, r.name || '']));
 
-  // ── 학년·반·번호·성명 ──
-  out.push(slot([373.9, 399.8], 185.1, 12.9, 13, r.grade, 'g'));
-  out.push(slot([425.9, 458.3], 185.1, 12.9, 13, r.cls, 'g'));
-  out.push(slot([471.3, 510.1], 185.1, 12.9, 13, r.no, 'g'));
-  out.push(slot([413.9, 537], 206.0, 12.9, 13, r.name, 'g', 'left'));
-
-  // ── 동그라미: 사유(출석인정/질병) + 체크된 종류 ──
-  if (r.cause === '출석인정' || r.cause === '질병') out.push(ellipse(r.cause));
-  for (const k of circledKinds(r)) out.push(ellipse(k));
-
-  // ── 1. 기간 ──
-  for (const key of ['late', 'early', 'result']) {
+  // ── 1. 기간 (함초롬돋움 Bold 12) — 양식 "□·지각·2026년····월·····일·(····교시)·등교"
+  //    예시 "☑·조퇴·2026년···3월····5일·(···5교시)·부터", "···11일"
+  const rows = [['late', '지각', 326.88, [1, '등교']], ['early', '조퇴', 350.88, [1, '부터']], ['result', '결과', 374.88, []]];
+  for (const [key, label, y, tail] of rows) {
     const it = r.items?.[key];
-    const y = ROW_Y[key];
     const p = parts(it?.date);
-    out.push(at(ROW_BOX_X[key], y, 15.6, 12, box(!!it), 'hb'));
-    out.push(at(ONE_DAY_SLOTS.year, y, 15.6, 12, p.y || baseYear, 'hb'));
-    out.push(slot(ONE_DAY_SLOTS.month, y, 15.6, 12, p.m, 'hb', 'right'));
-    out.push(slot(ONE_DAY_SLOTS.day, y, 15.6, 12, p.d, 'hb', 'right'));
-    out.push(slot(ONE_DAY_SLOTS.period, y, 15.6, 12, it?.period ?? '', 'hb', 'right'));
+    out.push(flow(107.52, y, 12, 'hb', [
+      box(!!it), 1, label, 1, `${p.y || baseYear}년`, ...fill(4, p.m), '월', ...fill(5, p.d), '일', 1,
+      '(', ...fill(4, it?.period ?? ''), '교시)', ...tail,
+    ]));
   }
   {
-    // 결석 줄은 원본 예시처럼 숫자를 칸 가운데에 ("6 월  19 일")
+    // 결석 — 예시 "☑·결석·2026년···3월···10일··부터··2026년···3월···10일·까지·(···1·일)"
     const it = r.items?.absent;
-    const y = ROW_Y.absent;
-    const s = parts(it?.start), e = parts(it?.end || it?.start);
-    out.push(at(ROW_BOX_X.absent, y, 15.6, 12, box(!!it), 'hb'));
-    out.push(at(ABSENT_SLOTS.year, y, 15.6, 12, s.y || baseYear, 'hb'));
-    out.push(slot(ABSENT_SLOTS.month, y, 15.6, 12, s.m, 'hb'));
-    out.push(slot(ABSENT_SLOTS.day, y, 15.6, 12, s.d, 'hb'));
-    out.push(at(ABSENT_SLOTS.endYear, y, 15.6, 12, e.y || baseYear, 'hb'));
-    out.push(slot(ABSENT_SLOTS.endMonth, y, 15.6, 12, e.m, 'hb'));
-    out.push(slot(ABSENT_SLOTS.endDay, y, 15.6, 12, e.d, 'hb'));
-    out.push(slot(ABSENT_SLOTS.days, y, 15.6, 12, it ? it.days : '', 'hb'));
+    const s0 = parts(it?.start), e0 = parts(it?.end || it?.start);
+    const days = it ? String(it.days ?? '') : '';
+    out.push(flow(107.04, 398.88, 12, 'hb', [
+      box(!!it), 1, '결석', 1, `${s0.y || baseYear}년`, ...fill(4, s0.m), '월', ...fill(5, s0.d), '일', 2, '부터', 2,
+      `${e0.y || baseYear}년`, ...fill(4, e0.m), '월', ...fill(5, e0.d), '일', 1, '까지', 1,
+      '(', ...(days ? [4 - len(days), days, 1] : [5]), '일)',
+    ]));
   }
 
-  // ── 2. 사유 ──
-  out.push(slot([145.1, 523.1], 411.8, 15.6, 12, r.reason, 'hb'));
+  // ── 2. 사유 — 양식 "(" + 빈칸 63 + ")". 예시 3장 모두 왼쪽 빈칸 = (63 - 사유 폭)/2 - 2.
+  //    오른쪽은 예시마다 달라(+3, +4, +0) 왼쪽 + 2로 둔다.
+  {
+    const v = String(r.reason || '').trim();
+    const u = [...v].reduce((a, ch) => a + (ch === ' ' ? 1 : new RegExp(`[${HANGUL}]`).test(ch) ? 1.94 : 1.1), 0);
+    const left = Math.max(1, Math.floor((63 - u) / 2) - 2);
+    out.push(flow(92.40, 424.68, 12, 'hb', ['2.', 1, '사유:', 1, '(', ...(v ? [left, v, left + 2] : [63]), ')']));
+  }
 
-  // ── 작성일 · 본인 · 보호자 ──
+  // ── 작성일 (굴림 12) — 양식 "2026·년······월······일", 예시 "2026·년···3·월····6·일", "···23·일"
   {
     const w = parts(r.written);
-    out.push(at(234.0, 458.4, 12.0, 12, w.y || baseYear, 'g'));
-    out.push(slot([279.6, 315.6], 458.4, 12.0, 12, w.m, 'g'));
-    out.push(slot([327.6, 363.6], 458.4, 12.0, 12, w.d, 'g'));
+    out.push(flow(234.00, 468.72, 12, 'g', [
+      `${w.y || baseYear}`, 1, '년', ...(w.m ? [4 - len(w.m), String(w.m), 1] : [6]), '월', ...(w.d ? [5 - len(w.d), String(w.d), 1] : [6]), '일',
+    ]));
   }
-  out.push(slot([371.5, 473.5], 485.5, 12.0, 12, r.selfName, 'g'));
-  out.push(slot([371.5, 473.5], 509.5, 12.0, 12, r.guardianName, 'g'));
+  // ── 본인·보호자 — 양식 이름 칸 빈칸 17. 예시 "본··인·····LI·SHIYU···(인)", "본··인·KIM·VIKTORIYA·(인)"
+  //    오른쪽 = (17 - 이름 폭)/2 - 1 (최소 1), 왼쪽 = 나머지
+  const signName = v => {
+    v = String(v || '').trim();
+    if (!v) return [17];
+    const u = [...v].reduce((a, ch) => a + (ch === ' ' ? 1 : new RegExp(`[${HANGUL}]`).test(ch) ? 2 : 1.1), 0);
+    const right = Math.max(1, Math.floor((17 - u) / 2) - 1);
+    return [Math.max(1, Math.floor(17 - u - right)), v, right];
+  };
+  out.push(flow(335.52, 495.84, 12, 'g', ['본', 2, '인', ...signName(r.selfName), '(인)']));
+  out.push(flow(335.52, 519.84, 12, 'g', ['보호자', ...signName(r.guardianName), '(인)']));
 
   // ── 확인서 1. 확인방법 ──
-  out.push(at(107.5, 632.3, 15.6, 12, box(r.method === '가정방문'), 'hb'));
-  out.push(at(183.7, 632.3, 15.6, 12, box(r.method === '전화연락'), 'hb'));
-  out.push(at(107.5, 671.9, 15.6, 12, box(r.method === '기타'), 'hb'));
-  if (r.method === '기타') out.push(slot([188, 531], 671.9, 15.6, 12, r.methodEtc, 'hb', 'left'));
+  out.push(flow(107.52, 645.12, 12, 'hb', [box(r.method === '가정방문')]));
+  out.push(flow(183.72, 645.12, 12, 'hb', [box(r.method === '전화연락')]));
+  // 날짜·시·대화자 — 양식 "2026년····월·····일······시,··대화자·:", 예시 "2026년···3월····5일····13시,··대화자·:·아버님"
   {
-    const c = parts(r.confirmDate);
-    out.push(at(119.5, 650.3, 15.6, 12, c.y || baseYear, 'hb'));
-    out.push(slot([157.6, 181.6], 650.3, 15.6, 12, c.m, 'hb', 'right'));
-    out.push(slot([193.2, 223.2], 650.3, 15.6, 12, c.d, 'hb', 'right'));
-    out.push(slot([234.8, 270.8], 650.3, 15.6, 12, r.confirmHour, 'hb', 'right'));
-    out.push(slot([348.2, 531], 650.3, 15.6, 12, r.talker, 'hb', 'left'));
+    const cd = parts(r.confirmDate);
+    out.push(flow(119.52, 663.12, 12, 'hb', [
+      `${cd.y || baseYear}년`, ...fill(4, cd.m), '월', ...fill(5, cd.d), '일', ...fill(6, r.confirmHour), '시,', 2, '대화자', 1, ':',
+      ...(r.talker ? [1, r.talker] : []),
+    ]));
+  }
+  out.push(flow(107.52, 684.72, 12, 'hb', [
+    box(r.method === '기타'), 1, '기', 4, '타', 1, ':', ...(r.method === '기타' && r.methodEtc ? [1, r.methodEtc] : []),
+  ]));
+
+  // ── 2. 첨부 — 한글처럼 줄을 나누고, 늘어난 줄만큼 아래를 내린다 ──
+  const att = layoutAttach(r.attach, opts.measure);
+  att.lines.forEach((ln, i) => out.push(flow(ln.x, ATTACH.y + i * att.lineGap, att.size, 'hb', ln.items)));
+  const shift = num(Math.max(0, att.lines.length - 1) * att.lineGap);
+
+  for (const run of MOVING) out.push(fixed(run, shift, opts));
+  // 확인서 날짜 — 가운데 맞춤(원본 양식 줄 가운데 297.56). 예시 "2026·년····3·월····9·일", "····13·일"
+  {
+    const cn = parts(r.confirmedOn);
+    out.push(flow(297.56, 750.36 + shift, 12, 'g', [
+      `${cn.y || baseYear}`, 1, '년', ...(cn.m ? [4, String(cn.m), 1] : [6]), '월', ...(cn.d ? [4, String(cn.d), 1] : [6]), '일',
+    ], 'middle'));
+  }
+  // 담임 — 양식 "학급·담임" + 빈칸 14 + "(인)", 예시 "학급·담임····오범석·····(인)"
+  {
+    const t = String(r.teacherName || '').trim();
+    const u = [...t].reduce((a, ch) => a + (new RegExp(`[${HANGUL}]`).test(ch) ? 2 : 1.1), 0);
+    out.push(flow(341.52, 773.16 + shift, 12, 'g', ['학급', 1, '담임', ...(t ? [4, t, Math.max(1, Math.round(11 - u))] : [14]), '(인)']));
   }
 
-  // ── 2. 첨부 + 그 아래 블록(첨부 줄 수만큼 내려감) + 바깥 틀 ──
-  const rel = ([x, y, h, size, text, cls]) => at(x - FRAME.left, +(y - BLOCK_TOP).toFixed(1), h, size, text, cls);
-  const c = parts(r.confirmedOn);
-  const moving = [
-    ...MOVING.map(rel),
-    `<i class="ln" style="left:${94.5 - FRAME.left}pt;top:${(730 - BLOCK_TOP).toFixed(1)}pt;width:${531 - 94.5}pt;"></i>`,
-    rel([226.8, 740.1, 12.0, 12, c.y || baseYear, 'g']),
-    slot([272.3 - FRAME.left, 308.3 - FRAME.left], +(740.1 - BLOCK_TOP).toFixed(1), 12.0, 12, c.m, 'g'),
-    slot([320.3 - FRAME.left, 356.3 - FRAME.left], +(740.1 - BLOCK_TOP).toFixed(1), 12.0, 12, c.d, 'g'),
-    slot([395.5 - FRAME.left, 479.5 - FRAME.left], +(762.9 - BLOCK_TOP).toFixed(1), 12.0, 12, r.teacherName, 'g'),
-  ].join('');
-
-  // 담임확인서(상기명 학생은 …) 처럼 괄호로 설명을 붙이면, 괄호 안 내용 전체가
-  // "담임확인서(" 오른쪽 칸에 들어가고 둘째 줄부터도 괄호 안 첫 글자에 맞춘다.
-  // 괄호 앞부분이 한 줄의 절반을 넘으면 들여쓰지 않는다.
-  const attach = String(r.attach ?? '');
-  const open = attach.indexOf('(');
-  const head = open > 0 ? attach.slice(0, open + 1) : '';
-  const attachHtml = head && emWidth(head) * 12 < (ATTACH_RIGHT - ATTACH_X) / 2
-    ? `<span class="att-head">${esc(head)}</span><span class="att-body">${esc(attach.slice(open + 1))}</span>`
-    : (esc(attach) || '&nbsp;');
-
-  const spacer = ATTACH_TOP - (ATTACH_LH - 15.6) / 2 - FRAME.top;
-  const frame =
-    `<div class="frame" style="left:${FRAME.left}pt;top:${FRAME.top}pt;width:${FRAME.right - FRAME.left}pt;">` +
-      `<div style="height:${spacer.toFixed(1)}pt"></div>` +
-      `<div class="attach hb" style="margin-left:${ATTACH_X - FRAME.left}pt;width:${ATTACH_RIGHT - ATTACH_X}pt;line-height:${ATTACH_LH}pt;">${attachHtml}</div>` +
-      `<div class="below" style="height:${FRAME.bottom - BLOCK_TOP}pt;">${moving}</div>` +
-    `</div>`;
-
-  return `<div class="sheet"><div class="sheet-in">${frame}${out.join('')}</div></div>`;
+  const circled = [...(r.cause === '출석인정' || r.cause === '질병' ? [r.cause] : []), ...circledKinds(r)];
+  const svg = `<svg class="page" xmlns="http://www.w3.org/2000/svg" width="595.32pt" height="841.92pt" viewBox="0 0 595.32 841.92">` +
+    drawLines(circled, shift) + out.join('') + `</svg>`;
+  return `<div class="sheet" data-shift="${shift}" data-attach-lines="${att.lines.length}" data-attach-size="${att.size}"><div class="sheet-in">${svg}</div></div>`;
 }

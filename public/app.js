@@ -1123,12 +1123,18 @@ function sheetData(r) {
   return { ...r, grade: S.cls.grade, cls: S.cls.cls };
 }
 
+/** 한컴돋움이 있으면 원본과 같은 점(․)을 쓴다 */
+let sheetOptsCache = null;
+function sheetOpts() {
+  return (sheetOptsCache ||= { haansoftDotum: hasFont('한컴돋움') || hasFont('Haansoft Dotum') });
+}
+
 let resizeBound = false;
 function updatePreview() {
   if (!E) return;
   const box = $('ePrevBox'), prev = $('ePrev');
   if (!box) return;
-  prev.innerHTML = renderSheet(sheetData(E.r));
+  prev.innerHTML = renderSheet(sheetData(E.r), sheetOpts());
   const scale = Math.min(1, box.clientWidth / 794);
   prev.style.transform = `scale(${scale})`;
   prev.style.width = '794px';
@@ -1146,9 +1152,10 @@ function updatePreview() {
   }
   const an = $('eAttachNote');
   if (an) {
-    const sheet = prev.querySelector('.attach');
-    const lines = sheet ? Math.round(sheet.getBoundingClientRect().height / scale / (19.2 * 96 / 72)) : 1;
-    an.textContent = lines > 3 ? `첨부가 ${lines}줄입니다. 3줄을 넘으면 아래 칸이 밀려 종이 끝에 가까워집니다.` : '';
+    const d = prev.querySelector('.sheet')?.dataset || {};
+    const lines = Number(d.attachLines) || 0, size = Number(d.attachSize) || 12;
+    an.textContent = lines > 3 ? `첨부가 ${lines}줄이라 종이 아래로 넘칠 수 있습니다. 줄여 주세요.`
+      : size < 12 ? `첨부가 길어 3줄에 맞추려고 글자를 ${size}pt로 줄였습니다(원래 12pt).` : '';
   }
   if (!resizeBound) {
     resizeBound = true;
@@ -1180,17 +1187,10 @@ function showZone(scroll = false) {
   const PX = 96 / 72;
   let box = ZONES[E.zone] && ZONES[E.zone].map(v => v * PX);
   if (!box) {
-    // 화면 배율과 상관없이 sheet-in 기준 좌표(px, 배율 1)로 바꾼다
-    const scale = inner.getBoundingClientRect().width / inner.offsetWidth;
-    const base = inner.getBoundingClientRect();
-    const rel = el => { const b = el.getBoundingClientRect(); return [(b.left - base.left) / scale, (b.top - base.top) / scale, (b.right - base.left) / scale, (b.bottom - base.top) / scale]; };
-    if (E.zone === 'attach') {
-      const a = rel(inner.querySelector('.attach'));
-      box = [86 * PX, a[1] - 2, 531 * PX, a[3] + 2];
-    } else if (E.zone === 'teacher') {
-      const b = rel(inner.querySelector('.below'));
-      box = [220 * PX, b[1] + 22 * PX, 510 * PX, b[3] - 4 * PX];
-    }
+    // 첨부와 그 아래는 첨부가 늘어난 만큼(shift) 내려간다
+    const shift = Number(inner.closest('.sheet')?.dataset.shift) || 0;
+    if (E.zone === 'attach') box = [86, 697, 531, 716 + shift].map(v => v * PX);
+    else if (E.zone === 'teacher') box = [220, 737 + shift, 510, 778 + shift].map(v => v * PX);
   }
   if (!box) return;
   const hl = document.createElement('i');
@@ -1262,8 +1262,9 @@ function fontNote() {
 async function printReports(list) {
   if (!list.length) return;
   const area = $('printArea');
-  area.innerHTML = list.map(p => renderSheet(sheetData(p))).join('');
+  // 첨부 줄나눔이 글자 폭을 재므로 글꼴이 준비된 뒤에 그린다
   try { await document.fonts.ready; } catch {}
+  area.innerHTML = list.map(p => renderSheet(sheetData(p), sheetOpts())).join('');
   const clear = () => { area.innerHTML = ''; window.removeEventListener('afterprint', clear); };
   window.addEventListener('afterprint', clear);
   setTimeout(() => window.print(), 50);
