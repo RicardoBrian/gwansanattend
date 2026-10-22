@@ -1092,8 +1092,9 @@ function fontNote() {
   const missing = [];
   if (!hasFont('굴림') && !hasFont('Gulim')) missing.push('굴림');
   if (!hasFont('함초롬돋움') && !hasFont('HCR Dotum')) missing.push('함초롬돋움');
+  if (!hasFont('함초롬바탕') && !hasFont('HCR Batang')) missing.push('함초롬바탕');
   if (!missing.length) return '';
-  return `<div class="font-note">이 기기에 ${missing.join('·')} 글꼴이 없어 나눔고딕으로 대신 보입니다. 칸 위치는 같지만 글자 모양이 원본과 조금 다릅니다.
+  return `<div class="font-note">이 기기에 ${missing.join('·')} 글꼴이 없어 나눔 글꼴로 대신 보입니다. 칸 위치는 같지만 글자 모양이 원본과 조금 다릅니다.
     원본과 같은 글꼴로 출력하려면 학교 PC(Windows, 한글 설치)에서 출력하세요.</div>`;
 }
 
