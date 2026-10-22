@@ -59,10 +59,16 @@ function slot([x0, x1], y, h, size, text, cls, align = 'center') {
   return `<span class="t ${cls}" style="left:${x0}pt;top:${y}pt;width:${w}pt;text-align:${align};line-height:${h}pt;font-size:${fit}pt;">${esc(text)}</span>`;
 }
 
-/** 한글 1자 ≈ 1em, 영문·숫자·공백 ≈ 0.55em 으로 어림한 폭이 빈칸을 넘으면 줄인다. */
-export function fitSize(text, width, size, min = 7) {
+/** 한글 1자 ≈ 1em, 영문·숫자·공백 ≈ 0.55em 으로 어림한 글 폭(em) */
+function emWidth(text) {
   let em = 0;
   for (const ch of text) em += /[ᄀ-ᇿ㄰-㆏가-힣一-鿿]/.test(ch) ? 1 : 0.55;
+  return em;
+}
+
+/** 어림한 폭이 빈칸을 넘으면 글자 크기를 줄인다. */
+export function fitSize(text, width, size, min = 7) {
+  const em = emWidth(text);
   if (em * size <= width) return size;
   return Math.max(min, Math.floor((width / em) * 10) / 10);
 }
@@ -170,11 +176,21 @@ export function renderSheet(r) {
     slot([395.5 - FRAME.left, 479.5 - FRAME.left], +(762.9 - BLOCK_TOP).toFixed(1), 12.0, 12, r.teacherName, 'g'),
   ].join('');
 
+  // 담임확인서(상기명 학생은 …) 처럼 괄호로 설명을 붙이면, 줄이 넘어갈 때
+  // 둘째 줄부터 "(" 아래에 맞춘다 — 원본 예시가 그렇게 쓰여 있다.
+  // 괄호 앞부분이 한 줄의 절반을 넘으면 들여쓰지 않는다.
+  const attach = String(r.attach ?? '');
+  const open = attach.indexOf('(');
+  const head = open > 0 ? attach.slice(0, open) : '';
+  const attachHtml = head && emWidth(head) * 12 < (ATTACH_RIGHT - ATTACH_X) / 2
+    ? `<span class="att-head">${esc(head)}</span><span class="att-body">${esc(attach.slice(open))}</span>`
+    : (esc(attach) || '&nbsp;');
+
   const spacer = ATTACH_TOP - (ATTACH_LH - 15.6) / 2 - FRAME.top;
   const frame =
     `<div class="frame" style="left:${FRAME.left}pt;top:${FRAME.top}pt;width:${FRAME.right - FRAME.left}pt;">` +
       `<div style="height:${spacer.toFixed(1)}pt"></div>` +
-      `<div class="attach hb" style="margin-left:${ATTACH_X - FRAME.left}pt;width:${ATTACH_RIGHT - ATTACH_X}pt;line-height:${ATTACH_LH}pt;">${esc(r.attach) || '&nbsp;'}</div>` +
+      `<div class="attach hb" style="margin-left:${ATTACH_X - FRAME.left}pt;width:${ATTACH_RIGHT - ATTACH_X}pt;line-height:${ATTACH_LH}pt;">${attachHtml}</div>` +
       `<div class="below" style="height:${FRAME.bottom - BLOCK_TOP}pt;">${moving}</div>` +
     `</div>`;
 

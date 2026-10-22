@@ -9,6 +9,9 @@ const testEnv = await initializeTestEnvironment({
   firestore: { rules: readFileSync('firestore.rules', 'utf8'), host: '127.0.0.1', port: 8080 },
 });
 
+// 같은 에뮬레이터로 앱을 띄워 본 데이터가 남아 있어도 결과가 흔들리지 않게 비우고 시작한다.
+await testEnv.clearFirestore();
+
 let pass = 0, fail = 0;
 const ok = async (label, p) => {
   try { await p; pass++; console.log('  PASS  ' + label); }
@@ -33,6 +36,19 @@ await testEnv.withSecurityRulesDisabled(async ctx => {
   await setDoc(doc(db, 'allowed/lee@gmail.com'), { email: 'lee@gmail.com', note: '' });
   await setDoc(doc(db, 'allowed/kim2@gmail.com'), { email: 'kim2@gmail.com', note: '' });
 });
+
+/** 선생님 신청 → 관리자 승인(허용 등록 + 반 생성 + 신청 삭제) — 앱의 approveRequest와 같은 배치 */
+async function approve(ctx, uid, email, name, year, grade, cls) {
+  await setDoc(doc(ctx, `requests/${uid}`), { email, name, year, grade, cls, createdAt: serverTimestamp() });
+  const { writeBatch, getDoc: gd } = await import('firebase/firestore');
+  const b = writeBatch(admin);
+  if (!(await gd(doc(admin, `allowed/${email}`))).exists()) {
+    b.set(doc(admin, `allowed/${email}`), { email, note: name, addedAt: serverTimestamp() });
+  }
+  b.set(doc(admin, `classes/${year}-${grade}-${cls}`), classData(uid, email, { year, grade, cls, teacherName: name }));
+  b.delete(doc(admin, `requests/${uid}`));
+  return b.commit();
+}
 
 const classData = (uid, email, over = {}) => ({
   year: 2026, grade: 2, cls: 1, ownerUid: uid, ownerEmail: email,
@@ -71,7 +87,9 @@ await ok('이메일 미인증 계정 거부', assertFails(setDoc(doc(unverified,
 await ok('없는 반 확인(get) 가능', assertSucceeds(getDoc(doc(kim, 'classes/2026-2-1'))));
 await ok('반 ID와 학년·반이 다르면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1'), classData('kim-uid', 'kim@gmail.com', { cls: 3 }))));
 await ok('남의 uid로 등록 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1'), classData('lee-uid', 'kim@gmail.com'))));
-await ok('김 담임 2학년 1반 등록', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1'), classData('kim-uid', 'kim@gmail.com'))));
+await ok('허용된 담임도 반을 직접 만들 수는 없음(먼저 차지하기 방지)', assertFails(setDoc(doc(kim, 'classes/2026-2-1'), classData('kim-uid', 'kim@gmail.com'))));
+await ok('관리자도 신청 없이 반을 만들 수는 없음', assertFails(setDoc(doc(admin, 'classes/2026-2-1'), classData('kim-uid', 'kim@gmail.com'))));
+await ok('김 담임 신청 → 관리자 승인으로 2학년 1반', assertSucceeds(approve(kim, 'kim-uid', 'kim@gmail.com', '김선생', 2026, 2, 1)));
 await ok('이미 등록된 반은 다른 담임이 덮어쓰기 불가', assertFails(setDoc(doc(lee, 'classes/2026-2-1'), classData('lee-uid', 'lee@gmail.com'))));
 await ok('다른 담임은 남의 반 정보 못 봄', assertFails(getDoc(doc(lee, 'classes/2026-2-1'))));
 await ok('내 반 목록 조회', assertSucceeds(getDocs(query(collection(kim, 'classes'), where('ownerUid', '==', 'kim-uid')))));
@@ -98,12 +116,41 @@ await ok('관리자도 학생 정보는 못 읽음', assertFails(getDocs(collect
 await ok('관리자도 신고서는 못 읽음', assertFails(getDoc(doc(admin, 'classes/2026-2-1/reports/p1'))));
 await ok('비로그인은 못 읽음', assertFails(getDocs(collection(anon, 'classes/2026-2-1/records'))));
 
+console.log('\n[승인 신청]');
+const park = user('park-uid', 'park@gmail.com');   // 아직 허용 안 된 새 선생님
+const reqData = (over = {}) => ({ email: 'park@gmail.com', name: '박선생', year: 2026, grade: 3, cls: 2, createdAt: serverTimestamp(), ...over });
+const parkClass = (over = {}) => classData('park-uid', 'park@gmail.com', { grade: 3, cls: 2, teacherName: '박선생', ...over });
+await ok('허용 안 된 선생님도 자기 신청서는 작성', assertSucceeds(setDoc(doc(park, 'requests/park-uid'), reqData())));
+await ok('남의 uid로 신청 불가', assertFails(setDoc(doc(park, 'requests/other-uid'), reqData())));
+await ok('남의 이메일로 신청 불가', assertFails(setDoc(doc(park, 'requests/park-uid'), reqData({ email: 'kim@gmail.com' }))));
+await ok('신청서에 다른 필드 불가', assertFails(setDoc(doc(park, 'requests/park-uid'), reqData({ admin: true }))));
+await ok('비로그인 신청 불가', assertFails(setDoc(doc(anon, 'requests/x'), reqData())));
+await ok('본인 신청서 확인', assertSucceeds(getDoc(doc(park, 'requests/park-uid'))));
+await ok('다른 선생님은 신청 목록 못 봄', assertFails(getDocs(collection(kim, 'requests'))));
+await ok('관리자는 신청 목록 조회', assertSucceeds(getDocs(collection(admin, 'requests'))));
+await ok('신청만으로는 반 등록 불가', assertFails(setDoc(doc(park, 'classes/2026-3-2'), parkClass())));
+await ok('관리자도 신청과 다른 반은 못 만듦', assertFails(setDoc(doc(admin, 'classes/2026-3-3'), parkClass({ cls: 3 }))));
+await ok('관리자도 신청 없는 계정에 반을 못 붙임', assertFails(setDoc(doc(admin, 'classes/2026-3-1'), classData('lee-uid', 'lee@gmail.com', { grade: 3 }))));
+{
+  // 승인: 허용 등록 + 반 생성 + 신청 삭제를 한 배치로
+  const { writeBatch } = await import('firebase/firestore');
+  const b = writeBatch(admin);
+  b.set(doc(admin, 'allowed/park@gmail.com'), { email: 'park@gmail.com', note: '3-2 박선생', addedAt: serverTimestamp() });
+  b.set(doc(admin, 'classes/2026-3-2'), parkClass());
+  b.delete(doc(admin, 'requests/park-uid'));
+  await ok('관리자 승인(배치)', assertSucceeds(b.commit()));
+}
+await ok('승인된 선생님은 자기 반 학생 추가', assertSucceeds(setDoc(doc(park, 'classes/2026-3-2/students/1'), { no: 1, name: '가', guardian: '', updatedAt: serverTimestamp() })));
+await ok('관리자는 승인한 반의 학생도 못 봄', assertFails(getDocs(collection(admin, 'classes/2026-3-2/students'))));
+await ok('본인 신청 취소', assertSucceeds(setDoc(doc(park, 'requests/park-uid'), reqData()).then(() => deleteDoc(doc(park, 'requests/park-uid')))));
+
 console.log('\n[허용 해제·담임 교체]');
 await ok('관리자는 반 목록 조회', assertSucceeds(getDocs(collection(admin, 'classes'))));
 await testEnv.withSecurityRulesDisabled(ctx => deleteDoc(doc(ctx.firestore(), 'allowed/kim@gmail.com')));
 await ok('허용 목록에서 빠지면 자기 반이어도 못 읽음', assertFails(getDocs(collection(kim, 'classes/2026-2-1/records'))));
 await ok('관리자 반 등록 해제', assertSucceeds(deleteDoc(doc(admin, 'classes/2026-2-1'))));
-await ok('해제 뒤 새 담임 등록', assertSucceeds(setDoc(doc(lee, 'classes/2026-2-1'), classData('lee-uid', 'lee@gmail.com'))));
+await ok('해제된 반을 다른 담임이 직접 가로채기 불가', assertFails(setDoc(doc(lee, 'classes/2026-2-1'), classData('lee-uid', 'lee@gmail.com'))));
+await ok('해제 뒤 새 담임은 신청 → 승인으로만', assertSucceeds(approve(lee, 'lee-uid', 'lee@gmail.com', '이선생', 2026, 2, 1)));
 await ok('새 담임은 기존 기록을 이어받음', assertSucceeds(getDocs(collection(lee, 'classes/2026-2-1/records'))));
 await ok('담임 본인 학년 말 반 삭제', assertSucceeds(deleteDoc(doc(lee, 'classes/2026-2-1'))));
 

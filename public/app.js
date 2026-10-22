@@ -34,6 +34,9 @@ const S = {
   printSel: new Set(),  // 신고서 선택(출력)
   unsubs: [],
   adminOnly: false,
+  requests: [],         // 관리자: 승인 대기 신청
+  myRequest: null,      // 담임: 새 학년도 반 신청(대기 중)
+  authUnsubs: [],       // 로그인 단위 구독(내 신청서, 관리자 신청 목록) — 반을 바꿔도 유지
   loaded: { students: false, records: false, reports: false },
 };
 
@@ -107,6 +110,8 @@ $('btnLogout').onclick = async () => {
 
 async function onAuth(user) {
   stopWatching();
+  S.authUnsubs.forEach(u => u());
+  S.authUnsubs = [];
   S.user = user;
   $('btnLogout').classList.toggle('hidden', !user);
   $('navEmail').textContent = user?.email || '';
@@ -117,14 +122,32 @@ async function onAuth(user) {
   try {
     const acc = await store.checkAccess(user);
     S.admin = acc.admin;
-    if (!acc.allowed) return renderDenied();
+    if (!acc.allowed) return renderRequest();
+    if (S.admin) {
+      S.authUnsubs.push(store.watchRequests(list => {
+        S.requests = list.sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
+        render();
+      }, fail));
+    }
     S.classes = await store.myClasses();
   } catch (e) {
     fail(e);
     app.innerHTML = `<div class="center-msg">불러오지 못했습니다. 새로고침해 주세요.<br><small>${esc(e.message)}</small></div>`;
     return;
   }
-  if (!S.classes.length) return renderSetup();
+  if (!S.classes.length) return renderRequest();
+  // 새 학년도 반 신청을 해 둔 경우: 승인되면 반 목록을 새로 받는다.
+  let hadReq = false;
+  S.authUnsubs.push(store.watchMyRequest(async rq => {
+    S.myRequest = rq;
+    if (!rq && hadReq) {
+      const before = new Set(S.classes.map(c => c.id));
+      S.classes = await store.myClasses().catch(() => S.classes);
+      const added = S.classes.find(c => !before.has(c.id));
+      toast(added ? `${added.grade}학년 ${added.cls}반이 승인되었습니다. 위쪽 반 이름을 눌러 바꿀 수 있습니다.` : '새 반 신청이 거절되었습니다.');
+    }
+    hadReq = !!rq;
+  }, fail));
   let want = null;
   try { want = localStorage.getItem(CLASS_KEY); } catch {}
   enterClass(S.classes.find(c => c.id === want) || S.classes[0]);
@@ -139,22 +162,85 @@ function renderLogin() {
         <div class="auth-sub">출결 기록 · 결석신고서 출력</div>
       </div>
       <button class="auth-btn" id="btnLogin">Google 계정으로 로그인</button>
-      <p class="hint" style="margin-top:16px;text-align:center;">관리자가 등록한 선생님 계정만 사용할 수 있습니다.<br>
+      <p class="hint" style="margin-top:16px;text-align:center;">처음이면 로그인 후 학년·반을 적어 승인을 신청합니다.<br>
       카카오톡·네이버 앱 안에서 열었다면 Chrome·Safari로 다시 열어 주세요.</p>
     </div>`;
   $('btnLogin').onclick = () => store.signIn().catch(fail);
 }
 
-function renderDenied() {
+/**
+ * 맡은 반이 없는 계정: 학년·반·이름으로 승인 신청.
+ * 반은 관리자 승인으로만 생긴다(규칙도 그렇게 막는다) — 아무 반이나 먼저 차지하거나,
+ * 담임 교체로 등록 해제된 반을 다른 선생님이 가로채 학생 기록을 보는 일을 막기 위해서다.
+ * 승인되면 신청서가 지워지고(허용 등록 + 반 지정과 같은 배치), 그걸 구독으로 감지해
+ * 다시 확인한다 — 새로고침 없이 바로 반 화면으로.
+ */
+function renderRequest() {
+  let had = false;
+  S.authUnsubs.push(store.watchMyRequest(async rq => {
+    if (!rq && had) {
+      // 승인 또는 거절 — 반이 생겼는지로 갈라 준다.
+      had = false;
+      try {
+        const a = await store.checkAccess(S.user);
+        const mine = a.allowed ? await store.myClasses() : [];
+        if (mine.length) onAuth(S.user);
+        else drawRequestForm('신청이 거절되었습니다. 내용을 확인해 다시 신청하거나 관리자에게 문의하세요.');
+      } catch (e) { fail(e); }
+      return;
+    }
+    had = !!rq;
+    rq ? drawPending(rq) : drawRequestForm();
+  }, fail));
+}
+
+function drawRequestForm(note = '') {
   app.innerHTML = `
-    <div class="auth-card">
-      <div class="auth-head"><div class="auth-word">승인되지 않은 계정</div>
+    <div class="auth-card" style="max-width:520px;">
+      <div class="auth-head"><div class="auth-word">사용 신청</div>
         <div class="auth-sub">${esc(S.user.email)}</div></div>
-      <p class="hint" style="text-align:center;">관리자에게 위 이메일을 등록해 달라고 요청한 뒤 다시 로그인해 주세요.<br>
-      학생 정보 보호를 위해 등록된 계정만 사용할 수 있습니다.</p>
-      <button class="auth-btn" id="btnOut">다른 계정으로 로그인</button>
+      ${note ? `<p class="hint warn" style="text-align:center;">${esc(note)}</p>` : ''}
+      ${setupForm()}
+      <button class="auth-btn" id="rqGo">승인 신청</button>
+      ${S.admin ? '<button class="btn ghost" id="suAdmin" style="display:block;margin:12px auto 0;">반 없이 관리 화면만 보기</button>' : ''}
+      <button class="btn ghost" id="rqOut" style="display:block;margin:12px auto 0;">다른 계정으로 로그인</button>
     </div>`;
-  $('btnOut').onclick = async () => { await store.signOut(); };
+  $('rqOut').onclick = () => store.signOut();
+  $('suAdmin')?.addEventListener('click', () => { S.adminOnly = true; render(); });
+  $('rqGo').onclick = async () => {
+    const year = +$('suYear').value, grade = +$('suGrade').value, cls = +$('suCls').value;
+    const name = $('suName').value.trim();
+    if (!name) return toast('담임 이름을 입력하세요.');
+    $('rqGo').disabled = true;
+    // 이미 등록된 반인지는 여기서 확인하지 않는다 — 승인 전 계정에게 반 등록 현황을
+    // 보여 주지 않기 위해서다. 겹치면 관리자 화면에 표시되고 승인 버튼이 막힌다.
+    try {
+      await store.submitRequest({ year, grade, cls, name });
+    } catch (e) { fail(e); $('rqGo').disabled = false; }
+  };
+}
+
+function drawPending(rq) {
+  app.innerHTML = `
+    <div class="auth-card" style="max-width:520px;">
+      <div class="auth-head"><div class="auth-word">승인 대기 중</div>
+        <div class="auth-sub">${esc(S.user.email)}</div></div>
+      <p style="text-align:center;font-weight:700;">${rq.year}학년도 ${rq.grade}학년 ${rq.cls}반 · ${esc(rq.name)} 선생님</p>
+      <p class="hint" style="text-align:center;">관리자가 승인하면 이 화면이 자동으로 바뀝니다. 창을 닫았다가 나중에 다시 와도 됩니다.<br>
+      학생 정보 보호를 위해 승인된 계정만 사용할 수 있습니다.</p>
+      <button class="btn" id="rqCancel" style="display:block;margin:16px auto 0;">신청 취소하고 다시 쓰기</button>
+      ${S.admin ? '<button class="btn ghost" id="suAdmin" style="display:block;margin:12px auto 0;">관리 화면 보기 (내 신청도 거기서 승인)</button>' : ''}
+    </div>`;
+  $('suAdmin')?.addEventListener('click', () => { S.adminOnly = true; render(); });
+  $('rqCancel').onclick = async () => {
+    try {
+      // 취소로 지워지는 건 승인과 구분해야 한다 — 구독을 먼저 끊어 승인으로 오인하지 않게.
+      S.authUnsubs.forEach(u => u());
+      S.authUnsubs = [];
+      await store.cancelRequest();
+      renderRequest();
+    } catch (e) { fail(e); }
+  };
 }
 
 // ── 반 등록 ─────────────────────────────────────────
@@ -169,35 +255,7 @@ function setupForm() {
       <div class="field"><label>반</label><select class="inp" id="suCls">${Array.from({ length: 15 }, (_, i) => opt(i + 1, 1)).join('')}</select></div>
     </div>
     <div class="field"><label>담임 이름 (확인서에 인쇄)</label><input class="inp" id="suName" maxlength="20" placeholder="예: 홍길동"></div>
-    <p class="hint">한 반은 선생님 한 분만 등록할 수 있습니다. 등록한 선생님만 그 반 학생과 출결 기록을 볼 수 있습니다.</p>`;
-}
-
-async function submitSetup(root) {
-  const v = id => root.querySelector('#' + id).value;
-  const btn = root.querySelector('#suGo');
-  btn.disabled = true;
-  try {
-    const c = await store.claimClass({ year: +v('suYear'), grade: +v('suGrade'), cls: +v('suCls'), teacherName: v('suName').trim() });
-    S.classes = await store.myClasses();
-    closeModal();
-    enterClass(S.classes.find(x => x.id === c.id) || c, 'students');
-    toast('반을 등록했습니다. 명렬표를 올려 주세요.');
-  } catch (e) {
-    fail(e);
-    btn.disabled = false;
-  }
-}
-
-function renderSetup() {
-  app.innerHTML = `
-    <div class="auth-card" style="max-width:520px;">
-      <div class="auth-head"><div class="auth-word">담임 반 등록</div><div class="auth-sub">처음 한 번만 하면 됩니다</div></div>
-      ${setupForm()}
-      <button class="auth-btn" id="suGo">반 등록</button>
-      ${S.admin ? '<button class="btn ghost" id="suAdmin" style="display:block;margin:12px auto 0;">반 없이 관리 화면만 보기</button>' : ''}
-    </div>`;
-  $('suGo').onclick = () => submitSetup(app);
-  $('suAdmin')?.addEventListener('click', () => { S.adminOnly = true; render(); });
+    <p class="hint">관리자가 승인하면 그 반의 담임이 됩니다. 한 반은 선생님 한 분만 맡을 수 있고, 담임만 그 반 학생과 출결 기록을 볼 수 있습니다.</p>`;
 }
 
 $('classPill').onclick = () => {
@@ -208,16 +266,31 @@ $('classPill').onclick = () => {
         <div class="main"><div class="who">${c.year}학년도 ${c.grade}학년 ${c.cls}반</div><div class="sub">${esc(c.teacherName)}</div></div>
         <div class="flags">${c.id === S.cls?.id ? '<span class="chip ok">보는 중</span>' : ''}</div>
       </div>`).join('')}</div>
-    <h3>새 반 등록 (새 학년도 등)</h3>
-    ${setupForm()}
-    <div class="actions"><button class="btn" id="mClose">닫기</button><button class="btn accent" id="suGo">반 등록</button></div>`,
+    <h3>새 반 신청 (새 학년도 등)</h3>
+    ${S.myRequest
+      ? `<p><b>${S.myRequest.year}학년도 ${S.myRequest.grade}학년 ${S.myRequest.cls}반</b> 승인 대기 중입니다.</p>
+         <div class="actions"><button class="btn" id="mClose">닫기</button><button class="btn danger" id="rqCancel2">신청 취소</button></div>`
+      : `${setupForm()}
+         <div class="actions"><button class="btn" id="mClose">닫기</button><button class="btn accent" id="rqGo2">승인 신청</button></div>`}`,
   root => {
     root.querySelectorAll('[data-cid]').forEach(el => el.onclick = () => {
       closeModal();
       enterClass(S.classes.find(c => c.id === el.dataset.cid));
     });
     root.querySelector('#mClose').onclick = closeModal;
-    root.querySelector('#suGo').onclick = () => submitSetup(root);
+    root.querySelector('#rqCancel2')?.addEventListener('click', () => store.cancelRequest().then(closeModal).catch(fail));
+    root.querySelector('#suName')?.setAttribute('value', S.cls?.teacherName || '');
+    root.querySelector('#rqGo2')?.addEventListener('click', async e => {
+      const v = id => root.querySelector('#' + id).value;
+      const name = v('suName').trim();
+      if (!name) return toast('담임 이름을 입력하세요.');
+      e.target.disabled = true;
+      try {
+        await store.submitRequest({ year: +v('suYear'), grade: +v('suGrade'), cls: +v('suCls'), name });
+        closeModal();
+        toast('신청했습니다. 관리자가 승인하면 알려 드립니다.');
+      } catch (err) { fail(err); e.target.disabled = false; }
+    });
   });
 };
 
@@ -286,7 +359,7 @@ function render() {
     const n = todoCount();
     app.innerHTML = `
       <div class="tabs">${TABS.filter(([k]) => k !== 'admin' || S.admin).map(([k, label]) => `
-        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="신고서가 필요한 기록">${n}</span>` : ''}</button>`).join('')}
+        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="신고서가 필요한 기록">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
       </div>
       <div id="tabBody"></div>`;
     app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
@@ -398,7 +471,7 @@ function renderRecords(body) {
 
 function recordRow(r) {
   const canSel = needsReport(r.cause) && !r.reportId;
-  const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : (r.period ? `${r.period}교시` : '');
+  const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : (r.period ? `${esc(r.period)}교시` : '');
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
       ? '<button class="chip ok" data-report title="신고서 열기">신고서 ✓</button>'
@@ -529,7 +602,9 @@ function openRecord(existing) {
     };
     q('#rCancel').onclick = closeModal;
     q('#rDel')?.addEventListener('click', async () => {
-      if (!confirm(`${existing.name} ${rangeLabel(existing).replace('<br>', '')} ${typeLabel(existing)} 기록을 삭제할까요?`)) return;
+      const linked = existing.reportId && S.reports.some(p => p.id === existing.reportId);
+      if (!confirm(`${existing.name} ${rangeLabel(existing).replace('<br>', '')} ${typeLabel(existing)} 기록을 삭제할까요?`
+        + (linked ? '\n\n이 기록으로 만든 신고서는 지워지지 않으니, 필요 없으면 신고서 탭에서 따로 지우세요.' : ''))) return;
       try { await store.deleteRecord(S.cls.id, existing.id); S.sel.delete(existing.id); closeModal(); toast('삭제했습니다.'); }
       catch (e) { fail(e); }
     });
@@ -770,6 +845,11 @@ function bindEditor() {
   q('#eNo').onchange = e => {
     const s = byNo(+e.target.value);
     if (!s) return;
+    // 다른 학생 기록에 연결된 채로 학생만 바뀌면 목록의 "신고서 ✓"가 엉뚱한 학생에게 붙는다.
+    if (r.recordIds?.length && s.no !== r.no) {
+      if (!confirm('이 신고서는 출결 기록과 연결되어 있습니다. 학생을 바꾸면 연결이 끊깁니다. 바꿀까요?')) { e.target.value = r.no; return; }
+      r.recordIds = [];
+    }
     if (!r.selfName || r.selfName === r.name) r.selfName = s.name;
     r.no = s.no; r.name = s.name;
     r.guardianName = s.guardian || r.guardianName;
@@ -1090,10 +1170,24 @@ async function renderAdmin(body) {
   catch (e) { fail(e); body.innerHTML = '<div class="empty">불러오지 못했습니다.</div>'; return; }
   if (S.tab !== 'admin') return;
 
+  const taken = new Map(classes.map(c => [c.id, c]));
   body.innerHTML = `
     <div class="card">
+      <h2>승인 대기 (${S.requests.length})</h2>
+      ${S.requests.length ? `<table class="tbl"><thead><tr><th>신청한 반</th><th>이름</th><th>계정</th><th></th></tr></thead><tbody>
+        ${S.requests.map(rq => {
+          const t = taken.get(`${rq.year}-${rq.grade}-${rq.cls}`);
+          return `<tr><td>${rq.year} ${rq.grade}-${rq.cls}${t ? `<br><span class="hint warn">이미 ${esc(t.teacherName || t.ownerEmail)} 선생님 반</span>` : ''}</td>
+            <td>${esc(rq.name)}</td><td class="hint">${esc(rq.email)}</td>
+            <td style="text-align:right;white-space:nowrap;"><button class="btn sm ghost" data-reject="${esc(rq.uid)}">거절</button>
+            <button class="btn sm accent" data-approve="${esc(rq.uid)}" ${t ? 'disabled' : ''}>승인</button></td></tr>`;
+        }).join('')}</tbody></table>`
+      : '<p class="hint">대기 중인 신청이 없습니다. 선생님이 로그인해서 학년·반을 적고 신청하면 여기에 뜹니다.</p>'}
+    </div>
+    <div class="card">
       <h2>사용 허용 계정 (${allowed.length})</h2>
-      <p class="hint">여기 등록된 Gmail 계정만 로그인 후 사용할 수 있습니다. 삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
+      <p class="hint">승인하면 여기에 자동으로 들어갑니다. 신청 없이 바로 허용하려면 직접 추가하세요(그 선생님은 로그인 후 반을 직접 등록).
+      삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
       <div class="grid3" style="margin-top:10px;">
         <div class="field" style="grid-column:span 2;"><label>이메일</label><input class="inp" id="aEmail" type="email" placeholder="teacher@gmail.com"></div>
         <div class="field"><label>메모 (이름 등)</label><input class="inp" id="aNote" maxlength="40"></div>
@@ -1112,6 +1206,19 @@ async function renderAdmin(body) {
           <td style="text-align:right;"><button class="btn sm ghost" data-rel="${esc(c.id)}">등록 해제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
       </tbody></table>
     </div>`;
+
+  body.querySelectorAll('[data-approve]').forEach(b => b.onclick = async () => {
+    const rq = S.requests.find(x => x.uid === b.dataset.approve);
+    if (!rq) return;
+    b.disabled = true;
+    try { await store.approveRequest(rq); toast(`${rq.name} 선생님(${rq.grade}-${rq.cls})을 승인했습니다.`); render(); }
+    catch (e) { fail(e); b.disabled = false; }
+  });
+  body.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => {
+    const rq = S.requests.find(x => x.uid === b.dataset.reject);
+    if (!rq || !confirm(`${rq.name}(${rq.email}) 선생님의 신청을 거절할까요?`)) return;
+    try { await store.rejectRequest(rq.uid); } catch (e) { fail(e); }
+  });
 
   $('aAdd').onclick = async () => {
     const email = $('aEmail').value.trim().toLowerCase();

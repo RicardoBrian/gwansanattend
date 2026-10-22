@@ -16,13 +16,14 @@ const firebaseConfig = {
   appId: "1:443564323705:web:3c7fd14700ce0c64c975a8"
 };
 
-// 로컬(localhost)에서는 에뮬레이터에 붙는다. 설정값이 비어 있어도 demo 프로젝트로 돈다.
+// 로컬(localhost)에서는 항상 에뮬레이터의 demo 프로젝트에 붙는다.
+// 실제 프로젝트 설정을 로컬에서 쓰지 않으므로, 개발 중에 실제 학생 데이터를 건드릴 일이 없다.
 const LOCAL = ['localhost', '127.0.0.1'].includes(location.hostname);
 
 export const CONFIGURED = !!firebaseConfig.apiKey || LOCAL;
 
 const app = CONFIGURED
-  ? initializeApp(firebaseConfig.apiKey ? firebaseConfig : { apiKey: 'demo', projectId: 'demo-gwansanattend', authDomain: 'localhost' })
+  ? initializeApp(LOCAL ? { apiKey: 'demo', projectId: 'demo-gwansanattend', authDomain: 'localhost' } : firebaseConfig)
   : null;
 export const db = app && getFirestore(app);
 export const auth = app && getAuth(app);

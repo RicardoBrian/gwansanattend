@@ -5,7 +5,8 @@
  * 규칙의 hasOnly 목록과 다르면 저장이 거부된다.
  *
  *   admins/{email}                 관리자 (콘솔에서만 만든다)
- *   allowed/{email}                사용 허용된 선생님 계정 (관리자가 앱에서 추가)
+ *   requests/{uid}                 승인 신청 (학년·반·이름) — 관리자가 승인하면 지워진다
+ *   allowed/{email}                사용 허용된 선생님 계정 (승인 또는 관리자 직접 추가)
  *   classes/{연도-학년-반}          반. 처음 등록한 선생님이 담임(ownerUid)이 된다
  *     students/{번호}               명렬표
  *     records/{자동ID}              출결 기록
@@ -18,6 +19,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut as fbSignOut, onAuthStateChanged,
+  setPersistence, browserSessionPersistence,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 // ── 로그인 ───────────────────────────────────────────
@@ -27,6 +29,8 @@ export function watchAuth(cb) {
 }
 
 export async function signIn() {
+  // 교무실 공용 PC에서 다음 사람이 그대로 들어오지 않게, 브라우저를 닫으면 로그아웃된다.
+  await setPersistence(auth, browserSessionPersistence);
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
   try {
@@ -54,6 +58,48 @@ export async function checkAccess(user) {
   return { allowed: admin || !!a?.exists(), admin };
 }
 
+// ── 승인 신청 ─────────────────────────────────────────
+
+export function watchMyRequest(cb, onErr) {
+  return onSnapshot(doc(db, 'requests', auth.currentUser.uid), s => cb(s.exists() ? s.data() : null), onErr);
+}
+
+export function submitRequest({ year, grade, cls, name }) {
+  const user = auth.currentUser;
+  return setDoc(doc(db, 'requests', user.uid), {
+    email: emailOf(user), name, year, grade, cls, createdAt: serverTimestamp(),
+  });
+}
+
+export const cancelRequest = () => deleteDoc(doc(db, 'requests', auth.currentUser.uid));
+
+export function watchRequests(cb, onErr) {
+  return onSnapshot(collection(db, 'requests'), s => cb(s.docs.map(d => ({ uid: d.id, ...d.data() }))), onErr);
+}
+
+/**
+ * 승인: 허용 목록 등록 + 신청한 반의 담임 지정 + 신청서 삭제를 한 번에.
+ * 규칙은 관리자가 신청서 내용 그대로만 반을 만들 수 있게 검사한다.
+ */
+export async function approveRequest(rq) {
+  const id = classIdOf(rq.year, rq.grade, rq.cls);
+  const [cls, allowed] = await Promise.all([getDoc(doc(db, 'classes', id)), getDoc(doc(db, 'allowed', rq.email))]);
+  if (cls.exists()) throw new Error(`${rq.grade}학년 ${rq.cls}반은 이미 ${cls.data().teacherName || cls.data().ownerEmail} 선생님이 등록했습니다. 먼저 등록 해제하거나 신청을 거절하세요.`);
+  const b = writeBatch(db);
+  if (!allowed.exists()) {
+    b.set(doc(db, 'allowed', rq.email), { email: rq.email, note: `${rq.grade}-${rq.cls} ${rq.name}`.slice(0, 40), addedAt: serverTimestamp() });
+  }
+  b.set(doc(db, 'classes', id), {
+    year: rq.year, grade: rq.grade, cls: rq.cls,
+    ownerUid: rq.uid, ownerEmail: rq.email, teacherName: rq.name, offDays: [],
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  });
+  b.delete(doc(db, 'requests', rq.uid));
+  await b.commit();
+}
+
+export const rejectRequest = uid => deleteDoc(doc(db, 'requests', uid));
+
 // ── 반 ───────────────────────────────────────────────
 
 export const classIdOf = (year, grade, cls) => `${year}-${grade}-${cls}`;
@@ -64,32 +110,6 @@ export async function myClasses() {
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => b.year - a.year || a.grade - b.grade || a.cls - b.cls);
-}
-
-/**
- * 반 등록. 이미 다른 선생님이 등록한 반이면 규칙이 읽기를 막으므로
- * permission-denied 를 "이미 등록된 반"으로 해석한다.
- */
-export async function claimClass({ year, grade, cls, teacherName }) {
-  const user = auth.currentUser;
-  const id = classIdOf(year, grade, cls);
-  const ref = doc(db, 'classes', id);
-  let snap;
-  try {
-    snap = await getDoc(ref);
-  } catch (e) {
-    if (e.code === 'permission-denied') throw new Error(`${grade}학년 ${cls}반은 이미 다른 선생님이 등록했습니다. 관리자에게 등록 해제를 요청하세요.`);
-    throw e;
-  }
-  if (snap.exists()) return { id, ...snap.data() }; // 이미 내 반
-  const data = {
-    year, grade, cls,
-    ownerUid: user.uid, ownerEmail: emailOf(user),
-    teacherName: teacherName || '', offDays: [],
-    createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-  };
-  await setDoc(ref, data);
-  return { id, ...data };
 }
 
 export function watchClass(cid, cb, onErr) {

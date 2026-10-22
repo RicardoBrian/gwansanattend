@@ -22,4 +22,8 @@
 .sheet .circle { position: absolute; border: 0.7pt solid #000; border-radius: 50%; }
 .sheet .frame { position: absolute; border: 0.6pt solid #000; }
 .sheet .attach { font-size: 12pt; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+/* 괄호 설명 들여쓰기: 괄호 앞부분은 한 덩어리, 괄호부터는 그 오른쪽 칸 안에서 줄바꿈 */
+.sheet .attach:has(.att-head) { display: flex; }
+.sheet .att-head { flex: none; white-space: pre; }
+.sheet .att-body { flex: 1; min-width: 0; }
 .sheet .below { position: relative; }
