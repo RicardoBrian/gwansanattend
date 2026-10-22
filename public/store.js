@@ -12,7 +12,7 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js?v=2610222339';
+import { db, auth } from './firebase-config.js?v=2610222341';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, onSnapshot, writeBatch, serverTimestamp,
@@ -291,12 +291,16 @@ export async function saveReport(cid, r, prevRecordIds = []) {
 }
 
 export async function deleteReport(cid, r, existingRecordIds) {
-  const b = writeBatch(db);
-  b.delete(doc(sub(cid, 'reports'), r.id));
+  // 신고서 삭제가 먼저다. 연결된 기록의 표시 해제까지 한 묶음으로 하면, 기록 하나가 규칙에 걸려
+  // 거절될 때 신고서까지 안 지워진다(모두 성공하거나 모두 실패하는 묶음이라서).
+  await deleteDoc(doc(sub(cid, 'reports'), r.id));
+  const failed = [];
   for (const id of r.recordIds || []) {
-    if (existingRecordIds.has(id)) b.update(doc(sub(cid, 'records'), id), { reportId: null, updatedAt: serverTimestamp() });
+    if (!existingRecordIds.has(id)) continue;
+    try { await updateDoc(doc(sub(cid, 'records'), id), { reportId: null, updatedAt: serverTimestamp() }); }
+    catch { failed.push(id); }
   }
-  await b.commit();
+  return failed;  // 연결 표시를 못 지운 기록(화면은 신고서가 없는 것으로 처리한다)
 }
 
 // ── 학년 말 정리 ──────────────────────────────────────

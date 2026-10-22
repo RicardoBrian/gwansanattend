@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610222339';
-import * as store from './store.js?v=2610222339';
-import { renderSheet } from './form.js?v=2610222339';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222339';
+import { CONFIGURED } from './firebase-config.js?v=2610222341';
+import * as store from './store.js?v=2610222341';
+import { renderSheet } from './form.js?v=2610222341';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222341';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610222339';
+} from './dates.js?v=2610222341';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610222339';
+} from './model.js?v=2610222341';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -354,7 +354,7 @@ const TABS = [
 
 /** 아직 만들지 않은 신고서 장수(이어진 기록은 한 장) — 탭 배지와 안내 문구가 같은 숫자를 쓴다 */
 function todoCount() {
-  return groupForReports(S.records, offDays()).length;
+  return groupForReports(liveRecords(), offDays()).length;
 }
 
 let renderQueued = false;
@@ -433,8 +433,15 @@ function studentOptions(selected, includeName) {
 
 // ── 출결 기록 탭 ─────────────────────────────────────
 
+/** 신고서가 지워졌는데 기록에 연결 표시만 남은 경우(연결 해제가 거절됐을 때)는 "신고서 없음"으로 본다 */
+function liveRecords() {
+  if (!S.loaded.reports) return S.records;
+  const ids = new Set(S.reports.map(p => p.id));
+  return S.records.map(r => (r.reportId && !ids.has(r.reportId) ? { ...r, reportId: null } : r));
+}
+
 function renderRecords(body) {
-  const list = S.records
+  const list = liveRecords()
     .filter(r => inMonth(r.start, r.end))
     .filter(r => !S.filterNo || r.no === +S.filterNo)
     .filter(r => !S.todoOnly || (needsReport(r.cause) && !r.reportId) || !r.neis || (r.docs?.length && !r.docsIn))
@@ -851,7 +858,7 @@ function renderReports(body) {
 
   bindSelAll(body, list);
   bindMonthNav(body);
-  $('todoBulk')?.addEventListener('click', () => makeGroups(groupForReports(S.records, offDays())));
+  $('todoBulk')?.addEventListener('click', () => makeGroups(groupForReports(liveRecords(), offDays())));
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('btnAllPrint').onclick = () => printReports(list);
   $('btnNewRep').onclick = pickStudentForReport;
@@ -887,7 +894,7 @@ function pickStudentForReport() {
 
 /** 지금 보고 있는 달(또는 전체)에 걸친 "아직 신고서 없는" 묶음 */
 function monthGroups() {
-  return groupForReports(S.records, offDays())
+  return groupForReports(liveRecords(), offDays())
     .filter(g => g.some(r => inMonth(r.start, r.end)))
     .filter(g => !S.filterNo || g[0].no === +S.filterNo);
 }
@@ -897,7 +904,7 @@ function monthGroups() {
  * 바로 출력하지 않는다 — 작성일 같은 칸을 확인·수정한 뒤 저장·출력한다.
  */
 function editForRecord(rec) {
-  const all = [...S.records.filter(x => x.id !== rec.id), rec];
+  const all = [...liveRecords().filter(x => x.id !== rec.id), rec];
   const g = groupForReports(all, offDays()).find(x => x.some(r => r.id === rec.id));
   if (!g) return;
   const { report, warnings } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
@@ -1125,9 +1132,9 @@ function bindEditor() {
   q('#eDel')?.addEventListener('click', async () => {
     if (!confirm(`${r.name} 신고서를 삭제할까요? (출결 기록은 남습니다)`)) return;
     try {
-      await store.deleteReport(S.cls.id, r, new Set(S.records.map(x => x.id)));
+      const failed = await store.deleteReport(S.cls.id, r, new Set(S.records.map(x => x.id)));
       closeEditor();
-      toast('삭제했습니다.');
+      toast(failed.length ? '신고서는 삭제했습니다. 연결 표시를 못 지운 기록이 있지만 화면에는 영향이 없습니다.' : '삭제했습니다.');
     } catch (e) { fail(e); }
   });
 }
