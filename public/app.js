@@ -31,6 +31,7 @@ const S = {
   month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
   filterNo: '', todoOnly: false,
   printSel: new Set(),  // 신고서 선택(출력)
+  selReport: null,      // PC 화면 오른쪽에 미리보기로 띄운 신고서
   unsubs: [],
   adminOnly: false,
   requests: [],         // 관리자: 승인 대기 신청
@@ -334,6 +335,13 @@ function enterClass(c, tab) {
 
 // ── 메인 화면 ───────────────────────────────────────
 
+/**
+ * PC(넓은 화면)에서는 출결 기록과 신고서를 한 화면에 나란히 보여 준다 — 탭을 오갈 필요 없이
+ * 왼쪽 기록에서 고른 신고서가 오른쪽에 바로 뜬다. 좁은 화면(폰·태블릿)은 탭 그대로.
+ */
+const WIDE = window.matchMedia('(min-width: 1200px)');
+WIDE.addEventListener('change', () => render());
+
 const TABS = [
   ['records', '출결 기록'],
   ['reports', '신고서'],
@@ -360,14 +368,20 @@ function render() {
     }
     const y = window.scrollY;
     const n = todoCount();
+    const wide = WIDE.matches;
+    if (wide && S.tab === 'reports') S.tab = 'records';
+    const tabs = TABS
+      .filter(([k]) => (k !== 'admin' || S.admin) && !(wide && k === 'reports'))
+      .map(([k, label]) => [k, wide && k === 'records' ? '출결 · 신고서' : label]);
+    const badgeOn = wide ? 'records' : 'reports';
     app.innerHTML = `
-      <div class="tabs">${TABS.filter(([k]) => k !== 'admin' || S.admin).map(([k, label]) => `
-        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="아직 만들지 않은 신고서">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
+      <div class="tabs">${tabs.map(([k, label]) => `
+        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === badgeOn && n ? ` <span class="badge" title="아직 만들지 않은 신고서">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
       </div>
       <div id="tabBody"></div>`;
     app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
     const body = $('tabBody');
-    ({ records: renderRecords, reports: renderReports, students: renderStudents, settings: renderSettings, admin: renderAdmin })[S.tab](body);
+    ({ records: renderRecordsTab, reports: renderReports, students: renderStudents, settings: renderSettings, admin: renderAdmin })[S.tab](body);
     window.scrollTo(0, y);
   });
 }
@@ -463,7 +477,8 @@ function renderRecords(body) {
     row.querySelector('[data-report]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       const rep = S.reports.find(p => p.id === r.reportId);
-      if (rep) openEditor(rep);
+      if (rep && WIDE.matches) { S.selReport = rep.id; render(); }
+      else if (rep) openEditor(rep);
       else editForRecord(r);
     });
   });
@@ -473,7 +488,7 @@ function recordRow(r) {
   const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r);
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
-      ? '<button class="chip ok" data-report title="신고서 열기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>'
+      ? `<button class="chip ok${WIDE.matches && S.selReport === r.reportId ? ' sel' : ''}" data-report title="신고서 보기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>`
       : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서 작성"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 작성</button>';
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
@@ -695,11 +710,86 @@ function reportSummary(p) {
   return parts_.join(', ') || '기간 없음';
 }
 
-function renderReports(body) {
-  const list = S.reports
+/** 지금 보는 달·학생의 신고서 (출결 날짜 최근 순) */
+function reportsInView() {
+  return S.reports
     .filter(p => { const d = reportDates(p); return d.length ? inMonth(d[0], d.at(-1)) : inMonth(p.written, p.written); })
     .filter(p => !S.filterNo || p.no === +S.filterNo)
     .sort((a, b) => (reportDates(b)[0] || b.written).localeCompare(reportDates(a)[0] || a.written) || a.no - b.no);
+}
+
+function renderRecordsTab(body) {
+  if (!WIDE.matches) return renderRecords(body);
+  body.innerHTML = '<div class="split"><section id="paneL"></section><aside class="pane-r" id="paneR"></aside></div>';
+  renderRecords($('paneL'));
+  renderReportPane($('paneR'));
+}
+
+/**
+ * PC 오른쪽 칸: 이 달 신고서 목록 + 고른 신고서 미리보기.
+ * 달·학생 필터는 왼쪽 기록과 같은 것을 쓴다. 고치기는 편집 화면(작성일 확인 등)으로.
+ */
+function renderReportPane(el) {
+  const list = reportsInView();
+  if (!list.some(p => p.id === S.selReport)) S.selReport = list[0]?.id || null;
+  const sel = list.find(p => p.id === S.selReport);
+  el.innerHTML = `
+    <div class="pane-head">
+      <h2>신고서 <span class="hint">${list.length}장</span></h2>
+      <span class="grow"></span>
+      ${S.printSel.size
+        ? `<button class="btn sm ghost" id="pSelClear">선택 해제</button>
+           <button class="btn sm accent" id="pSelPrint"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>선택 ${S.printSel.size}장 출력</button>`
+        : `<button class="btn sm" id="pAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>모두 출력</button>`}
+    </div>
+    <div class="list compact">
+      ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
+        <div class="row${p.id === S.selReport ? ' on' : ''}" data-id="${esc(p.id)}">
+          <span><input type="checkbox" ${S.printSel.has(p.id) ? 'checked' : ''} title="출력할 신고서 선택"></span>
+          <span class="date">${reportDateLabel(p)}</span>
+          <div class="main">
+            <div class="who">${p.no}번 ${esc(p.name)} <span class="chip c-${esc(p.cause)}">${esc(p.cause)}</span></div>
+            <div class="sub">${esc(reportSummary(p))} · <span class="hint">작성 ${shortLabel(p.written)}</span></div>
+          </div>
+        </div>`).join('') : '<div class="empty">이 달 신고서가 없습니다.</div>'}
+    </div>
+    ${sel ? `
+      <div class="pane-prev-head">
+        <b>${sel.no}번 ${esc(sel.name)}</b><span class="hint">미리보기</span>
+        <span class="grow"></span>
+        <button class="btn sm" id="pEdit">수정</button>
+        <button class="btn sm accent" id="pPrint"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>출력</button>
+      </div>
+      <div class="preview-box" id="pPrevBox"><div class="preview-scale" id="pPrev">${renderSheet(sheetData(sel))}</div></div>` : ''}
+    <p class="hint" style="margin-top:12px;">출결 기록 없이 신고서만 만들려면 <button class="linkish" id="btnNewRep">빈 신고서</button></p>`;
+
+  scalePanePreview();
+  el.querySelectorAll('.row[data-id]').forEach(row => {
+    const p = S.reports.find(x => x.id === row.dataset.id);
+    row.onclick = e => { if (!e.target.closest('input,button')) { S.selReport = p.id; render(); } };
+    row.ondblclick = () => openEditor(p);
+    row.querySelector('input[type=checkbox]').onchange = e => { e.target.checked ? S.printSel.add(p.id) : S.printSel.delete(p.id); render(); };
+  });
+  $('pEdit')?.addEventListener('click', () => openEditor(sel));
+  $('pPrint')?.addEventListener('click', () => printReports([sel]));
+  $('pAllPrint')?.addEventListener('click', () => printReports(list));
+  $('pSelPrint')?.addEventListener('click', () => printReports(list.filter(p => S.printSel.has(p.id))));
+  $('pSelClear')?.addEventListener('click', () => { S.printSel.clear(); render(); });
+  $('btnNewRep').onclick = pickStudentForReport;
+}
+
+function scalePanePreview() {
+  const box = $('pPrevBox'), prev = $('pPrev');
+  if (!box || !prev) return;
+  const scale = Math.min(1, box.clientWidth / 794);
+  prev.style.width = '794px';
+  prev.style.transform = `scale(${scale})`;
+  box.style.height = `${1123 * scale}px`;
+}
+window.addEventListener('resize', scalePanePreview);
+
+function renderReports(body) {
+  const list = reportsInView();
   const todo = todoCount();
 
   body.innerHTML = `
@@ -801,7 +891,7 @@ async function makeGroups(groups) {
       S.printSel.add(await store.saveReport(S.cls.id, report, []));
     }
     toast(`신고서 ${groups.length}장을 만들었습니다. 작성일 등을 확인한 뒤 출력하세요.`);
-    S.tab = 'reports';
+    S.tab = WIDE.matches ? 'records' : 'reports';
     render();
   } catch (e) { fail(e); }
   finally { making = false; }

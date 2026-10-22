@@ -200,3 +200,23 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 /* 알림은 화면 위쪽에 — 아래에 두면 입력창의 저장 버튼을 가린다 */
 .toast { bottom: auto; top: calc(var(--nav-h) + 12px); transform: translateX(-50%) translateY(-20px); z-index: 10000; }
 .toast.show { transform: translateX(-50%) translateY(0); }
+
+/* ── PC: 출결 기록 | 신고서 나란히 ── */
+@media (min-width: 1200px) {
+  .wrap:has(> .tabs) { max-width: 1680px; }
+}
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(440px, 40%); gap: 22px; align-items: start; }
+.pane-r {
+  position: sticky; top: calc(var(--nav-h) + 12px);
+  max-height: calc(100vh - var(--nav-h) - 24px); overflow-y: auto;
+  background: var(--glass); border: 1px solid var(--border-card); border-radius: var(--radius);
+  padding: 14px; box-shadow: var(--highlight), var(--shadow-sm);
+}
+.pane-head, .pane-prev-head { display: flex; align-items: center; gap: 8px; }
+.pane-head { margin-bottom: 10px; }
+.pane-head h2 { margin: 0; font-size: 1.05rem; }
+.pane-head .grow, .pane-prev-head .grow { flex: 1; }
+.pane-prev-head { margin: 16px 0 8px; }
+.list.compact .row { grid-template-columns: 22px 92px 1fr; padding: 8px 10px; }
+.row.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
+.chip.sel { outline: 2px solid var(--success); }
