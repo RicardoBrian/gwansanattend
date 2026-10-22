@@ -15,7 +15,7 @@ import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
 } from './dates.js';
 import {
-  KINDS, CAUSES, ITEM_KEYS, CONFIRM_METHODS,
+  KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
 } from './model.js';
 
@@ -84,6 +84,9 @@ document.addEventListener('keydown', e => {
   setDark(saved === '1');
   $('darkToggle').onclick = () => setDark(!document.body.classList.contains('dark'));
 }
+
+/** 유형 고르기 순서: 신고서를 쓰는 것부터 */
+const TYPE_ORDER = ['질병', '출석인정', '미인정', '기타'];
 
 const studentLabel = s => `${s.no}번 ${s.name}`;
 const byNo = no => S.students.find(s => s.no === no);
@@ -512,9 +515,9 @@ function openRecord(existing) {
   const html = () => `
     <h2>${existing ? '출결 기록 수정' : '출결 기록 추가'}</h2>
     <div class="field"><label>학생</label><select class="inp" id="rNo">${studentOptions(r.no, r.name)}</select></div>
-    <div class="field"><span class="lab">종류</span><div class="seg" id="rKind">${KINDS.map(k => `<button data-v="${k}" class="${r.kind === k ? 'on' : ''}">${k}</button>`).join('')}</div></div>
-    <div class="field"><span class="lab">사유 구분</span><div class="seg" id="rCause">${CAUSES.map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div>
-      <p class="hint" style="margin:6px 0 0;">${needsReport(r.cause) ? '질병·출석인정은 결석신고서를 만들 수 있습니다.' : '미인정·기타는 기록만 남깁니다(신고서 없음).'}</p></div>
+    <div class="field"><label>유형</label><select class="inp" id="rType">${TYPE_ORDER.map(c => `
+      <optgroup label="${c}">${KINDS.map(k => `<option value="${c}|${k}" ${r.cause === c && r.kind === k ? 'selected' : ''}>${c} ${k}</option>`).join('')}</optgroup>`).join('')}
+    </select></div>
     ${r.kind === '결석' ? `
       <div class="grid3">
         <div class="field"><label>시작일</label><input class="inp" type="date" id="rStart" value="${esc(r.start)}"></div>
@@ -527,9 +530,10 @@ function openRecord(existing) {
         <div class="field"><label>교시</label><input class="inp" id="rPeriod" maxlength="10" placeholder="예: 5" value="${esc(r.period)}"></div>
       </div>
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>`}
-    <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}">
-</div>
-    <div class="field"><span class="lab">보호자 확인 <span class="hint">— 신고서 아래 확인서에 들어갑니다</span></span>
+    <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}"></div>
+    ${needsReport(r.cause) ? `
+    <section class="sub-box"><div class="zone-title">신고서용 <span class="hint">— 결석신고서 아래 확인서·첨부에 들어갑니다</span></div>
+    <div class="field"><span class="lab">보호자 확인</span>
       <div class="seg" id="rMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
       ${r.method ? `
       ${r.method === '기타' ? `<input class="inp" style="margin-top:8px;" id="rMethodEtc" maxlength="60" placeholder="확인 방법" value="${esc(r.methodEtc)}">` : ''}
@@ -539,13 +543,9 @@ function openRecord(existing) {
         <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자 (예: 어머님)" value="${esc(r.talker)}"></div>
       </div>` : ''}
     </div>
-    <div class="field"><label>서류 (신고서 첨부에 그대로 들어감)</label>
+    <div class="field" style="margin-bottom:0;"><span class="lab">첨부 서류</span>
       <textarea class="inp" id="rDocs" rows="2" maxlength="400" placeholder="예: 진료확인서 / 담임확인서(상기명 학생은 …)">${esc((r.docs || []).join(', '))}</textarea></div>
-    <div class="field">
-      <label class="check"><input type="checkbox" id="rDocsIn" ${r.docsIn ? 'checked' : ''}>서류 받음</label>
-      <label class="check"><input type="checkbox" id="rNeis" ${r.neis ? 'checked' : ''}>나이스 입력함</label>
-    </div>
-    <div class="field"><label>메모 (신고서에는 안 나옴)</label><input class="inp" id="rMemo" maxlength="500" value="${esc(r.memo)}"></div>
+    </section>` : ''}
     ${existing?.reportId ? '<p class="hint">이 기록으로 만든 신고서가 있습니다. 기록을 고쳐도 신고서는 따로 고쳐야 합니다.</p>' : ''}
     <div class="actions">
       ${existing ? '<button class="btn danger left" id="rDel">삭제</button>' : ''}
@@ -563,12 +563,12 @@ function openRecord(existing) {
     if (r.kind === '결석') { r.end = v('rEnd').value || r.start; r.days = v('rDays').value; }
     else r.period = v('rPeriod').value.trim();
     r.reason = v('rReason').value.trim();
-    const docs = v('rDocs').value.trim();
-    r.docs = docs ? [docs] : [];
-    r.docsIn = v('rDocsIn').checked;
-    r.neis = v('rNeis').checked;
-    r.memo = v('rMemo').value.trim();
-    if (r.method) {
+    // 신고서용 칸은 질병·출석인정일 때만 화면에 있다 — 없을 때는 값을 그대로 둔다.
+    if (v('rDocs')) {
+      const docs = v('rDocs').value.trim();
+      r.docs = docs ? [docs] : [];
+    }
+    if (r.method && v('rConfDate')) {
       r.methodEtc = v('rMethodEtc')?.value.trim() || '';
       r.confirmDate = v('rConfDate').value;
       r.confirmHour = v('rConfHour').value.trim();
@@ -600,8 +600,18 @@ function openRecord(existing) {
 
   function bind(root) {
     const q = s => root.querySelector(s);
-    q('#rKind').querySelectorAll('button').forEach(b => b.onclick = () => { read(root); r.kind = b.dataset.v; daysManual = false; Object.assign(r, normalizeRecord(r)); if (r.kind === '결석') r.days = countSchoolDays(r.start, r.end, offDays()); draw(); });
-    q('#rCause').querySelectorAll('button').forEach(b => b.onclick = () => { read(root); r.cause = b.dataset.v; draw(); });
+    q('#rType').onchange = e => {
+      read(root);
+      const [cause, kind] = e.target.value.split('|');
+      const kindChanged = kind !== r.kind;
+      r.cause = cause; r.kind = kind;
+      if (kindChanged) {
+        daysManual = false;
+        Object.assign(r, normalizeRecord(r));
+        if (r.kind === '결석') r.days = countSchoolDays(r.start, r.end, offDays());
+      }
+      draw();
+    };
     q('#rStart').oninput = () => {
       if (r.kind === '결석') { const e = q('#rEnd'); if (!e.value || e.value < q('#rStart').value) e.value = q('#rStart').value; }
       updateDays(root);
@@ -609,7 +619,7 @@ function openRecord(existing) {
     q('#rEnd')?.addEventListener('input', () => updateDays(root));
     q('#rDays')?.addEventListener('input', () => { daysManual = true; updateDays(root); });
     // 확인 방법을 누르면 날짜·시각을 "지금"으로 채운다(보통 연락 받고 바로 기록하니까). 다시 누르면 해제.
-    q('#rMethod').querySelectorAll('button').forEach(b => b.onclick = () => {
+    q('#rMethod')?.querySelectorAll('button').forEach(b => b.onclick = () => {
       read(root);
       if (r.method === b.dataset.v) {
         Object.assign(r, { method: '', methodEtc: '', confirmDate: '', confirmHour: '', talker: '' });

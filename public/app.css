@@ -147,6 +147,10 @@ body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
 .zone-sec.on { background: var(--accent-light); border-color: var(--accent); }
 .zone-title { font-size: 0.85rem; font-weight: 800; margin-bottom: 8px; }
 .zone-sec.on .zone-title { color: var(--accent); }
+.sub-box {
+  border: 1px solid var(--border-card); border-radius: var(--radius-sm); background: var(--glass);
+  padding: 12px; margin-bottom: 14px;
+}
 label.mini { display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-3); margin-bottom: 4px; }
 .sheet .zone-hl {
   position: absolute; border-radius: 6px; pointer-events: none;
