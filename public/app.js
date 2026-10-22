@@ -424,9 +424,9 @@ function renderRecords(body) {
   const groups = monthGroups();
   body.innerHTML = `
     ${groups.length ? `<div class="card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="flex:1;min-width:200px;"><b>신고서 ${groups.length}장</b>을 출력할 수 있습니다
+      <span style="flex:1;min-width:200px;"><b>신고서 ${groups.length}장</b>을 만들 수 있습니다
         <span class="hint">— ${S.month === 'all' ? '전체 기간' : '이 달'}, 아직 신고서가 없는 질병·출석인정 기록을 학생별로 묶었습니다.</span></span>
-      <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>한 번에 출력</button>
+      <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>한 번에 만들기</button>
     </div>` : ''}
     ${noRoster ? `<div class="card"><b>명렬표가 비어 있습니다.</b> <span class="hint">명렬표 탭에서 CSV를 먼저 올려 주세요. 등록된 학생만 기록할 수 있습니다.</span>
       <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm accent" data-go="students">명렬표 올리기</button></div></div>` : ''}
@@ -449,7 +449,7 @@ function renderRecords(body) {
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('fTodo').onchange = e => { S.todoOnly = e.target.checked; render(); };
   $('btnNewRec').onclick = () => openRecord(null);
-  $('btnBulk')?.addEventListener('click', () => printGroups(groups));
+  $('btnBulk')?.addEventListener('click', () => makeGroups(groups));
   body.querySelectorAll('.row[data-id]').forEach(row => {
     const id = row.dataset.id;
     row.onclick = e => {
@@ -471,8 +471,8 @@ function renderRecords(body) {
     row.querySelector('[data-report]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       const rep = S.reports.find(p => p.id === r.reportId);
-      if (rep) printReports([rep]);
-      else printForRecord(r);
+      if (rep) openEditor(rep);
+      else editForRecord(r);
     });
   });
   $('selClear')?.addEventListener('click', () => { S.sel.clear(); render(); });
@@ -484,8 +484,8 @@ function recordRow(r) {
   const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r);
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
-      ? '<button class="chip ok" data-report title="다시 출력 (고치려면 신고서 탭)"><svg width="12" height="12"><use href="#ic-print"/></svg>신고서 ✓</button>'
-      : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서를 만들어 바로 출력"><svg width="12" height="12"><use href="#ic-print"/></svg>신고서 출력</button>';
+      ? '<button class="chip ok" data-report title="신고서 열기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>'
+      : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서 작성"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 작성</button>';
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
   return `
@@ -530,7 +530,7 @@ function openRecord(existing) {
     ${r.kind === '결석' ? `
       <div class="grid3">
         <div class="field"><label>시작일</label><input class="inp" type="date" id="rStart" value="${esc(r.start)}"></div>
-        <div class="field"><label>종료일</label><input class="inp" type="date" id="rEnd" value="${esc(r.end || r.start)}"></div>
+        <div class="field"><label>종료일</label><input class="inp" type="date" id="rEnd" min="${esc(r.start)}" value="${esc(r.end || r.start)}"></div>
         <div class="field"><label>일수</label><input class="inp" type="number" min="0" max="400" id="rDays" value="${esc(r.days ?? '')}"></div>
       </div>
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>` : `
@@ -559,7 +559,7 @@ function openRecord(existing) {
     <div class="actions">
       ${existing ? '<button class="btn danger left" id="rDel">삭제</button>' : ''}
       <button class="btn" id="rCancel">취소</button>
-      ${needsReport(r.cause) && !existing?.reportId ? '<button class="btn" id="rSaveRep"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>저장 후 신고서 출력</button>' : ''}
+      ${needsReport(r.cause) && !existing?.reportId ? '<button class="btn" id="rSaveRep"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>저장 후 신고서 작성</button>' : ''}
       <button class="btn accent" id="rSave">저장</button>
     </div>`;
 
@@ -621,19 +621,33 @@ function openRecord(existing) {
       }
       draw();
     };
+    // 시작일을 바꾸면 종료일·보호자 확인 날짜를 같이 옮긴다 — 지난 기록을 쓸 때 종료일 달력이
+    // 오늘 달에서 열리지 않도록. 종료일을 따로 고쳐 둔 경우(시작일과 달랐던 경우)는 그대로 둔다.
+    let prevStart = q('#rStart').value;
     q('#rStart').oninput = () => {
-      if (r.kind === '결석') { const e = q('#rEnd'); if (!e.value || e.value < q('#rStart').value) e.value = q('#rStart').value; }
+      const start = q('#rStart').value;
+      const e = q('#rEnd');
+      if (e) {
+        if (!e.value || e.value < start || e.value === prevStart) e.value = start;
+        e.min = start;
+      }
+      const c = q('#rConfDate');
+      if (c && (!c.value || c.value === prevStart)) c.value = start;
+      prevStart = start;
       updateDays(root);
     };
     q('#rEnd')?.addEventListener('input', () => updateDays(root));
     q('#rDays')?.addEventListener('input', () => { daysManual = true; updateDays(root); });
-    // 확인 방법을 누르면 날짜·시각을 "지금"으로 채운다(보통 연락 받고 바로 기록하니까). 다시 누르면 해제.
+    // 확인 방법을 누르면 날짜는 시작일로, 시각은 오늘 기록이면 "지금"으로 채운다. 다시 누르면 해제.
     q('#rMethod')?.querySelectorAll('button').forEach(b => b.onclick = () => {
       read(root);
       if (r.method === b.dataset.v) {
         Object.assign(r, { method: '', methodEtc: '', confirmDate: '', confirmHour: '', talker: '' });
       } else {
-        if (!r.method) { r.confirmDate = today(); r.confirmHour = nowHour(); }
+        if (!r.method) {
+          r.confirmDate = r.start || today();
+          r.confirmHour = r.confirmDate === today() ? nowHour() : '';
+        }
         r.method = b.dataset.v;
       }
       draw();
@@ -658,7 +672,7 @@ function openRecord(existing) {
         const id = await store.saveRecord(S.cls.id, rec);
         closeModal();
         toast('저장했습니다.');
-        if (thenReport) printForRecord({ ...rec, id });
+        if (thenReport) editForRecord({ ...rec, id });
       } catch (e) { fail(e); }
     };
     q('#rSave').onclick = () => save(false);
@@ -695,10 +709,10 @@ function renderReports(body) {
 
   body.innerHTML = `
     ${todo ? `<div class="card"><b>신고서가 아직 없는 기록이 ${todo}건 있습니다.</b>
-      <span class="hint">학생별로 이어진 기록끼리 묶어 ${groupForReports(S.records, offDays()).length}장으로 만들어 출력합니다.</span>
+      <span class="hint">학생별로 이어진 기록끼리 묶어 ${groupForReports(S.records, offDays()).length}장으로 만듭니다. 만든 뒤 확인하고 출력하세요.</span>
       <div class="actions" style="justify-content:flex-start;margin-top:10px;">
         <button class="btn sm" id="goTodo">기록 보기</button>
-        <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>모두 만들어 출력</button></div></div>` : ''}
+        <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>모두 만들기</button></div></div>` : ''}
     <div class="toolbar">
       ${monthNav()}
       <span class="grow"></span>
@@ -724,7 +738,7 @@ function renderReports(body) {
 
   bindMonthNav(body);
   $('goTodo')?.addEventListener('click', () => { S.tab = 'records'; S.todoOnly = true; S.month = 'all'; render(); });
-  $('todoBulk')?.addEventListener('click', () => printGroups(groupForReports(S.records, offDays())));
+  $('todoBulk')?.addEventListener('click', () => makeGroups(groupForReports(S.records, offDays())));
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('btnAllPrint').onclick = () => printReports(list);
   $('btnNewRep').onclick = pickStudentForReport;
@@ -765,34 +779,39 @@ function monthGroups() {
     .filter(g => !S.filterNo || g[0].no === +S.filterNo);
 }
 
-/** 기록 하나를 눌렀을 때: 그 기록과 이어진 기록들까지 한 장으로 */
-function printForRecord(rec) {
+/**
+ * 기록 하나에서 신고서 작성으로: 그 기록과 이어진 기록들까지 한 장으로 채운 작성 화면을 연다.
+ * 바로 출력하지 않는다 — 작성일 같은 칸을 확인·수정한 뒤 저장·출력한다.
+ */
+function editForRecord(rec) {
   const all = [...S.records.filter(x => x.id !== rec.id), rec];
   const g = groupForReports(all, offDays()).find(x => x.some(r => r.id === rec.id));
-  if (g) printGroups([g]);
+  if (!g) return;
+  const { report, warnings } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+  openEditor(report, warnings);
 }
 
-let printing = false;
+let making = false;
 /**
- * 묶음마다 신고서를 만들어 저장하고(기록에 "신고서 ✓"가 붙는다) 한 번에 출력한다.
- * 고칠 게 있으면 신고서 탭에서 열어 고친 뒤 다시 출력하면 된다.
+ * 밀린 묶음마다 신고서를 만들어 저장한다(기록에 "신고서 ✓"가 붙는다). 출력은 하지 않고
+ * 신고서 탭으로 옮겨 방금 만든 것들을 골라 둔다 — 확인·수정한 뒤 "한 번에 출력".
  */
-async function printGroups(groups) {
-  if (!groups.length || printing) return;
+async function makeGroups(groups) {
+  if (!groups.length || making) return;
   const people = new Set(groups.map(g => g[0].no)).size;
-  if (groups.length > 1 && !confirm(`신고서 ${groups.length}장(학생 ${people}명)을 만들고 출력할까요?`)) return;
-  printing = true;
+  if (!confirm(`신고서 ${groups.length}장(학생 ${people}명)을 만들까요? 만든 뒤 신고서 탭에서 확인하고 출력합니다.`)) return;
+  making = true;
   try {
-    const made = [];
+    S.printSel.clear();
     for (const g of groups) {
       const { report } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
-      report.id = await store.saveReport(S.cls.id, report, []);
-      made.push(report);
+      S.printSel.add(await store.saveReport(S.cls.id, report, []));
     }
-    toast(`신고서 ${made.length}장을 만들었습니다.`);
-    printReports(made);
+    toast(`신고서 ${groups.length}장을 만들었습니다. 작성일 등을 확인한 뒤 출력하세요.`);
+    S.tab = 'reports';
+    render();
   } catch (e) { fail(e); }
-  finally { printing = false; }
+  finally { making = false; }
 }
 
 function makeReport(recs) {
@@ -862,7 +881,7 @@ function drawEditor() {
         <div class="period-row absent">
           <label class="check"><input type="checkbox" data-item="absent" ${ab ? 'checked' : ''}>결석</label>
           <input class="inp" type="date" data-f="absent.start" value="${esc(ab?.start || '')}" ${ab ? '' : 'disabled'}>
-          <input class="inp" type="date" data-f="absent.end" value="${esc(ab?.end || '')}" ${ab ? '' : 'disabled'}>
+          <input class="inp" type="date" data-f="absent.end" min="${esc(ab?.start || '')}" value="${esc(ab?.end || '')}" ${ab ? '' : 'disabled'}>
           <input class="inp" type="number" min="0" max="400" data-f="absent.days" title="일수" value="${esc(ab?.days ?? '')}" ${ab ? '' : 'disabled'}>
         </div>
         <p class="hint" id="eAbsNote" style="margin:0;"></p></section>
@@ -947,10 +966,15 @@ function bindEditor() {
 
   ed.querySelectorAll('[data-f]').forEach(inp => inp.addEventListener('input', () => {
     const f = inp.dataset.f;
+    const oldStart = r.items.absent?.start;
     setPath(r, f, inp.value);
-    if (f === 'absent.start' && r.items.absent && (!r.items.absent.end || r.items.absent.end < inp.value)) {
-      r.items.absent.end = inp.value;
-      q('[data-f="absent.end"]').value = inp.value;
+    if (f === 'absent.start' && r.items.absent) {
+      const end = q('[data-f="absent.end"]');
+      if (!r.items.absent.end || r.items.absent.end < inp.value || r.items.absent.end === oldStart) {
+        r.items.absent.end = inp.value;
+        end.value = inp.value;
+      }
+      end.min = inp.value;
     }
     if (f === 'absent.days') E.absManual = true;
     if ((f === 'absent.start' || f === 'absent.end') && !E.absManual) {
