@@ -4,7 +4,7 @@
  * 필드 이름과 허용값은 firestore.rules의 검증과 일치해야 한다.
  * 여기서 바꾸면 규칙도 같이 바꾼다.
  */
-import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=20261022c';
+import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=2610222339';
 
 /** 나이스 출결 구분: 4종류 × 4사유 = 16유형 */
 export const KINDS = ['결석', '지각', '조퇴', '결과'];
@@ -88,6 +88,23 @@ export function emptyReport() {
   };
 }
 
+/**
+ * 결석 일수. 기록마다 일수를 더하되, 날짜가 겹치는 기록(같은 결석을 두 번 입력한 경우 등)은
+ * 겹친 부분을 한 번만 센다. 겹침 없이 한 건뿐이면 그 기록의 일수(직접 고친 값 포함)를 그대로 쓴다.
+ */
+export function absentDays(recs, offDays = []) {
+  const list = [...recs].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  const groups = [];
+  for (const x of list) {
+    const end = x.end || x.start, g = groups.at(-1);
+    if (g && x.start <= g.end) { g.end = end > g.end ? end : g.end; g.recs.push(x); }
+    else groups.push({ start: x.start, end, recs: [x] });
+  }
+  return groups.reduce((n, g) => n + (g.recs.length === 1
+    ? (Number(g.recs[0].days) || countSchoolDays(g.start, g.end, offDays))
+    : countSchoolDays(g.start, g.end, offDays)), 0);
+}
+
 const uniq = arr => [...new Set(arr.filter(Boolean))];
 
 /**
@@ -129,8 +146,10 @@ export function reportFromRecords(recs, { student, teacherName = '', offDays = [
   if (abs.length) {
     const start = abs[0].start;
     const end = abs.map(x => x.end || x.start).sort().at(-1);
-    const sum = abs.reduce((n, x) => n + (Number(x.days) || 0), 0);
-    r.items.absent = { start, end, days: sum || countSchoolDays(start, end, offDays) };
+    r.items.absent = { start, end, days: absentDays(abs, offDays) || countSchoolDays(start, end, offDays) };
+    if (abs.length > 1 && abs.some((x, i) => abs.slice(0, i).some(y => x.start <= (y.end || y.start) && (x.end || x.start) >= y.start))) {
+      warnings.push('날짜가 겹치는 결석 기록이 있어 겹친 날은 한 번만 셌습니다. 같은 기록을 두 번 입력하지 않았는지 확인하세요.');
+    }
   }
 
   r.reason = uniq(sorted.filter(x => needsReport(x.cause)).map(x => (x.reason || '').trim())).join(', ');

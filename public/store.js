@@ -12,7 +12,7 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js?v=20261022c';
+import { db, auth } from './firebase-config.js?v=2610222339';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, onSnapshot, writeBatch, serverTimestamp,

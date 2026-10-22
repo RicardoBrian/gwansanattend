@@ -128,3 +128,17 @@ test('교시: 지각 등교, 조퇴부터, 결과 몇~몇', () => {
   assert.equal(periodLabel({ kind: '조퇴', period: '5' }), '5교시부터 조퇴');
   assert.equal(periodLabel({ kind: '결과', period: '3~4' }), '3~4교시');
 });
+
+test('같은 날 결석 기록이 두 건이어도 일수는 겹친 날을 한 번만 센다', () => {
+  const { report, warnings } = reportFromRecords([
+    rec({ id: 'a', start: '2026-10-08', end: '2026-10-08', days: 1 }),
+    rec({ id: 'b', start: '2026-10-08', end: '2026-10-08', days: 1 }),
+  ]);
+  assert.deepEqual(report.items.absent, { start: '2026-10-08', end: '2026-10-08', days: 1 });
+  assert.ok(warnings.some(w => w.includes('겹')));
+  const r2 = reportFromRecords([
+    rec({ id: 'a', start: '2026-10-07', end: '2026-10-08', days: 2 }),
+    rec({ id: 'b', start: '2026-10-08', end: '2026-10-08', days: 1 }),
+  ]).report;
+  assert.equal(r2.items.absent.days, 2);
+});
