@@ -99,13 +99,15 @@ service cloud.firestore {
     // ── 반 ──
     function validClass(cid) {
       let d = request.resource.data;
-      return d.keys().hasOnly(['year', 'grade', 'cls', 'ownerUid', 'ownerEmail', 'teacherName', 'offDays', 'createdAt', 'updatedAt'])
+      return d.keys().hasOnly(['year', 'grade', 'cls', 'ownerUid', 'ownerEmail', 'teacherName', 'offDays', 'stamp', 'createdAt', 'updatedAt'])
         && d.keys().hasAll(['year', 'grade', 'cls', 'ownerUid', 'ownerEmail', 'teacherName', 'offDays', 'createdAt', 'updatedAt'])
         && d.year is int && d.year >= 2020 && d.year <= 2100
         && d.grade is int && d.grade >= 1 && d.grade <= 6
         && d.cls is int && d.cls >= 1 && d.cls <= 30
         && cid == string(d.year) + '-' + string(d.grade) + '-' + string(d.cls)
         && str(d.teacherName, 20)
+        // 담임 도장 그림: 작은 PNG만(문서 한도 1MB를 넘지 않게 80KB)
+        && (d.get('stamp', '') == '' || (str(d.stamp, 80000) && d.stamp.matches('^data:image/png;base64,[A-Za-z0-9+/=]+$')))
         && d.offDays is list && d.offDays.size() <= 300
         && d.updatedAt == request.time;
     }
@@ -146,12 +148,13 @@ service cloud.firestore {
       match /students/{sid} {
         allow read, delete: if ownsClass(cid);
         allow create, update: if ownsClass(cid)
-          && request.resource.data.keys().hasOnly(['no', 'name', 'guardian', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['no', 'name', 'koName', 'guardian', 'updatedAt'])
           && request.resource.data.no is int
           && request.resource.data.no >= 1 && request.resource.data.no <= 99
           && sid == string(request.resource.data.no)
           && str(request.resource.data.name, 40) && request.resource.data.name.size() > 0
           && str(request.resource.data.guardian, 40)
+          && str(request.resource.data.get('koName', ''), 40)
           && request.resource.data.updatedAt == request.time;
       }
 

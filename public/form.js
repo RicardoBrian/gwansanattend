@@ -19,8 +19,8 @@
  *   dot — "출석인정 ․ 질병" 사이 점: 원본은 한컴돋움의 ․(U+2024). 한컴돋움이 없으면 굴림 ·
  *   선  — 0.36pt(사유명 밑줄·동그라미 0.48pt), 절취선은 지름 0.96pt 점을 1.2pt 간격으로
  */
-import { parts } from './dates.js?v=2610222341';
-import { circledKinds } from './model.js?v=2610222341';
+import { parts } from './dates.js?v=2610222350';
+import { circledKinds } from './model.js?v=2610222350';
 
 /** 고정 글자 [기준선 y, 크기, 글꼴, 글자, 글자마다 x] — 원본 빈 양식 그대로 */
 const STATIC = [
@@ -108,7 +108,7 @@ function fixed([y, size, cls, text, xs], dy = 0, opts = {}) {
  * 값이 들어가는 줄. items는 글자 조각과 빈칸 개수(숫자)의 목록이다.
  * 빈칸 하나 = 글자 크기의 절반, 글자 조각 안의 공백도 빈칸 하나로 친다.
  */
-function flow(x, y, size, cls, items, anchor = '') {
+function flow(x, y, size, cls, items, anchor = '', attrs = '') {
   // 숫자는 빈칸 개수다 — 값(월·일 등)은 반드시 문자열로 넘긴다
   const segs = [];
   let gap = 0;
@@ -125,7 +125,7 @@ function flow(x, y, size, cls, items, anchor = '') {
   if (!segs.length) return '';
   const half = size / 2;
   const body = esc(segs[0][1]) + segs.slice(1).map(([g, t]) => `<tspan dx="${num(g * half)}">${esc(t)}</tspan>`).join('');
-  return `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${num(x + segs[0][0] * half)}" y="${num(y)}"${anchor ? ` text-anchor="${anchor}"` : ''}>${body}</text>`;
+  return `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${num(x + segs[0][0] * half)}" y="${num(y)}"${anchor ? ` text-anchor="${anchor}"` : ''}${attrs}>${body}</text>`;
 }
 
 /** 칸 n개 중 값이 차지하지 않은 만큼 빈칸 — 원본 예시: 값은 그 자리 빈칸을 한 글자에 하나씩 대신한다 */
@@ -212,6 +212,20 @@ export function layoutAttach(text, measure = makeMeasure()) {
   return best;
 }
 
+/** 굴림 기준 글 폭 어림(em): 한글 1, 대문자 0.68, 그 밖의 영문·숫자 0.55, 공백 0.5, 괄호 0.34 */
+function nameEm(v) {
+  let em = 0;
+  for (const ch of String(v)) {
+    em += ch === ' ' ? 0.5 : /[()]/.test(ch) ? 0.34 : /[A-Z]/.test(ch) ? 0.68 : new RegExp(`[${HANGUL}]`).test(ch) ? 1 : 0.55;
+  }
+  return em;
+}
+/** 이름이 칸(avail pt)을 넘으면 글자 크기를 줄인다(최소 9pt) */
+export function fitNameSize(v, size, avail) {
+  const w = nameEm(v) * size;
+  return w <= avail ? size : Math.max(9, Math.floor((size * avail / w) * 10) / 10);
+}
+
 // ── 선 ───────────────────────────────────────────────
 
 const L = (x1, y1, x2, y2, w = 0.36) => `<line x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" stroke-width="${w}"/>`;
@@ -240,7 +254,7 @@ function drawLines(circled, shift) {
 
 /**
  * @param {object} r 신고서(model.emptyReport 모양) + grade, cls
- * @param {{ haansoftDotum?: boolean, measure?: (ch: string) => number }} opts
+ * @param {{ haansoftDotum?: boolean, stamp?: string, measure?: (ch: string) => number }} opts
  *   haansoftDotum: 이 기기에 한컴돋움이 있으면 true(원본과 같은 점 ․)
  *   measure: 함초롬돋움 Bold 글자 폭(em) — 테스트용. 없으면 브라우저 canvas로 잰다
  * @returns {string} <div class="sheet">…</div>
@@ -258,8 +272,15 @@ export function renderSheet(r, opts = {}) {
     '제', ...(g ? [2, String(g), 1] : [4]), '학년', ...(c ? [2, String(c), 1] : [5]), '반',
     ...(n ? [1 + len(n), String(n), 1] : [6]), '번',
   ]));
-  // ── 성명 — "성·명·:·이름"
-  out.push(flow(364.08, 217.08, 12.96, 'g', ['성', 1, '명', 1, ':', 1, r.name || '']));
+  // ── 성명 — "성·명·:·이름". 영어 이름이면 "영어이름(한글이름)". 너무 길면 이름 칸 안에 들어오게 글자를 줄인다
+  out.push(flow(364.08, 217.08, 12.96, 'g', ['성', 1, '명', 1, ':']));
+  {
+    const shown = r.koName && r.koName !== r.name ? `${r.name}(${r.koName})` : (r.name || '');
+    const avail = 534 - 413.86, size = fitNameSize(shown, 12.96, avail);
+    // 9pt까지 줄여도 넘치면 글자 폭만 좁힌다
+    const squeeze = nameEm(shown) * size > avail ? ` textLength="${num(avail)}" lengthAdjust="spacingAndGlyphs"` : '';
+    out.push(flow(413.86, 217.08, size, 'g', [shown], '', squeeze));
+  }
 
   // ── 1. 기간 (함초롬돋움 Bold 12) — 양식 "□·지각·2026년····월·····일·(····교시)·등교"
   //    예시 "☑·조퇴·2026년···3월····5일·(···5교시)·부터", "···11일"
@@ -345,6 +366,11 @@ export function renderSheet(r, opts = {}) {
     const t = String(r.teacherName || '').trim();
     const u = [...t].reduce((a, ch) => a + (new RegExp(`[${HANGUL}]`).test(ch) ? 2 : 1.1), 0);
     out.push(flow(341.52, 773.16 + shift, 12, 'g', ['학급', 1, '담임', ...(t ? [4, t, Math.max(1, Math.round(11 - u))] : [14]), '(인)']));
+  }
+
+  // 담임 도장 — (인) 위에. 도장 그림은 설정에서 올린 PNG(주소 모양을 다시 확인한 것만 쓴다)
+  if (opts.stamp && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(opts.stamp)) {
+    out.push(`<image class="stamp" href="${opts.stamp}" x="478.8" y="${num(753.5 + shift)}" width="30" height="30" preserveAspectRatio="xMidYMid meet"/>`);
   }
 
   const circled = [...(r.cause === '출석인정' || r.cause === '질병' ? [r.cause] : []), ...circledKinds(r)];

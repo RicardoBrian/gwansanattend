@@ -142,3 +142,28 @@ test('같은 날 결석 기록이 두 건이어도 일수는 겹친 날을 한 �
   ]).report;
   assert.equal(r2.items.absent.days, 2);
 });
+
+import { parseRoster } from '../public/csv.js';
+
+test('명렬표 CSV: 한글이름 열(없어도 됨)', () => {
+  const a = parseRoster('학년,반,번호,이름,한글이름,보호자명\n2,1,1,KIM VIKTORIYA,김빅토리야,김어머니\n2,1,2,홍길동,,홍판서\n', { grade: 2, cls: 1 });
+  assert.deepEqual(a.students, [
+    { no: 1, name: 'KIM VIKTORIYA', koName: '김빅토리야', guardian: '김어머니' },
+    { no: 2, name: '홍길동', koName: '', guardian: '홍판서' },
+  ]);
+  const b = parseRoster('번호,이름\n3,LI SHIYU\n', { grade: 2, cls: 1 });
+  assert.equal(b.students[0].koName, '');
+});
+
+test('신고서: 영어이름(한글이름)은 성명 자리에만, 서명란은 영어이름만, 도장은 주소 모양이 맞을 때만', () => {
+  const { report } = reportFromRecords([rec({ name: 'KIM VIKTORIYA' })], { student: { no: 18, name: 'KIM VIKTORIYA', guardian: '' } });
+  const html = renderSheet({ ...report, grade: 2, cls: 1, koName: '김빅토리야' });
+  assert.equal((html.match(/VIKTORIYA\(김빅토리야\)/g) || []).length, 1); // 공백은 0.5em 빈칸으로 나뉘어 그려진다
+  assert.equal((html.match(/김빅토리야/g) || []).length, 1); // 서명란에는 영어이름만
+  assert.equal(report.selfName, 'KIM VIKTORIYA');
+  assert.ok(!html.includes('<image'));
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  assert.ok(renderSheet({ ...report, grade: 2, cls: 1 }, { stamp: png }).includes(`href="${png}"`));
+  assert.ok(!renderSheet({ ...report, grade: 2, cls: 1 }, { stamp: 'javascript:alert(1)' }).includes('<image'));
+  assert.ok(!renderSheet({ ...report, grade: 2, cls: 1 }, { stamp: 'data:image/png;base64,AA"onload="x' }).includes('<image'));
+});

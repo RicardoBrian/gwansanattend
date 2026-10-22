@@ -1,12 +1,12 @@
 /**
  * 명렬표 CSV 읽기 — DOM·Firebase 의존 없음 (tests/csv.test.mjs).
  *
- * 양식: 학년,반,번호,이름,보호자명
+ * 양식: 학년,반,번호,이름,한글이름,보호자명  (한글이름은 영어 이름으로 등록된 학생만 적는다. 열이 없어도 된다)
  * 학년 전체 명렬표를 그대로 올려도 되게, 선택한 반의 줄만 골라낸다.
  * 학년·반 열이 없는 파일이면 전부 이 반 학생으로 본다.
  */
 
-export const TEMPLATE = '﻿학년,반,번호,이름,보호자명\n2,1,1,홍길동,홍판서\n2,1,2,김철수,\n';
+export const TEMPLATE = '﻿학년,반,번호,이름,한글이름,보호자명\n2,1,1,홍길동,,홍판서\n2,1,2,KIM VIKTORIYA,김빅토리야,\n';
 
 /**
  * 엑셀에서 "CSV로 저장"하면 한국어 Windows는 UTF-8이 아니라 CP949(EUC-KR)로 저장한다.
@@ -48,6 +48,7 @@ const COLS = {
   cls: ['반'],
   no: ['번호', '번'],
   name: ['이름', '성명', '학생명'],
+  koName: ['한글이름', '한글명', '국문이름', '한국이름'],
   guardian: ['보호자명', '보호자', '보호자 이름', '보호자이름'],
 };
 
@@ -57,7 +58,7 @@ const num = s => {
 };
 
 /**
- * @returns {{ students: {no,name,guardian}[], errors: string[], skipped: number }}
+ * @returns {{ students: {no,name,koName,guardian}[], errors: string[], skipped: number }}
  *   skipped: 다른 학년·반이라 건너뛴 줄 수
  */
 export function parseRoster(text, { grade, cls }) {
@@ -88,7 +89,8 @@ export function parseRoster(text, { grade, cls }) {
     if (name.length > 40) { errors.push(`${line}번째 줄: 이름이 너무 깁니다.`); return; }
     if (byNo.has(no)) { errors.push(`${line}번째 줄: ${no}번이 중복됩니다.`); return; }
     const guardian = idx.guardian >= 0 ? (r[idx.guardian] || '').trim().slice(0, 40) : '';
-    byNo.set(no, { no, name, guardian });
+    const koName = idx.koName >= 0 ? (r[idx.koName] || '').trim().slice(0, 40) : '';
+    byNo.set(no, { no, name, koName, guardian });
   });
 
   const students = [...byNo.values()].sort((a, b) => a.no - b.no);

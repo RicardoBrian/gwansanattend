@@ -8,8 +8,8 @@ test('선택한 반 학생만 골라낸다', () => {
   assert.deepEqual(errors, []);
   assert.equal(skipped, 1);
   assert.deepEqual(students, [
-    { no: 1, name: '김가나', guardian: '김부모' },
-    { no: 2, name: '이, 다라', guardian: '' },
+    { no: 1, name: '김가나', koName: '', guardian: '김부모' },
+    { no: 2, name: '이, 다라', koName: '', guardian: '' },
   ]);
 });
 

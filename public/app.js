@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610222341';
-import * as store from './store.js?v=2610222341';
-import { renderSheet } from './form.js?v=2610222341';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222341';
+import { CONFIGURED } from './firebase-config.js?v=2610222350';
+import * as store from './store.js?v=2610222350';
+import { renderSheet } from './form.js?v=2610222350';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222350';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610222341';
+} from './dates.js?v=2610222350';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610222341';
+} from './model.js?v=2610222350';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1140,13 +1140,16 @@ function bindEditor() {
 }
 
 function sheetData(r) {
-  return { ...r, grade: S.cls.grade, cls: S.cls.cls };
+  // 한글 이름은 명렬표에서 가져온다(신고서에 따로 저장하지 않음) — 영어 이름 학생은 "영어이름(한글이름)"
+  const st = S.students.find(x => x.no === r.no);
+  return { ...r, grade: S.cls.grade, cls: S.cls.cls, koName: st?.koName || '' };
 }
 
 /** 한컴돋움이 있으면 원본과 같은 점(․)을 쓴다 */
 let sheetOptsCache = null;
 function sheetOpts() {
-  return (sheetOptsCache ||= { haansoftDotum: hasFont('한컴돋움') || hasFont('Haansoft Dotum') });
+  sheetOptsCache ||= { haansoftDotum: hasFont('한컴돋움') || hasFont('Haansoft Dotum') };
+  return { ...sheetOptsCache, stamp: S.cls?.stamp || '' };
 }
 
 let resizeBound = false;
@@ -1304,7 +1307,7 @@ function renderStudents(body) {
   body.innerHTML = `
     <div class="card">
       <h2>명렬표 (${S.students.length}명)</h2>
-      <p class="hint">CSV 양식: <b>학년,반,번호,이름,보호자명</b>. 학년 전체 명렬표를 올려도 ${S.cls.grade}학년 ${S.cls.cls}반 학생만 골라 넣습니다.
+      <p class="hint">CSV 양식: <b>학년,반,번호,이름,한글이름,보호자명</b>(한글이름은 영어 이름 학생만 적고, 열이 없어도 됩니다). 학년 전체 명렬표를 올려도 ${S.cls.grade}학년 ${S.cls.cls}반 학생만 골라 넣습니다.
       CSV를 올리면 명렬표를 통째로 바꿉니다(이미 저장된 출결 기록은 그대로 남습니다).</p>
       <div class="toolbar" style="margin:12px 0 0;">
         <label class="btn sm accent" style="display:inline-flex;align-items:center;gap:4px;">
@@ -1316,7 +1319,7 @@ function renderStudents(body) {
     <div class="card">
       ${!S.loaded.students ? '<div class="empty">불러오는 중…</div>' : S.students.length ? `
       <table class="tbl"><thead><tr><th>번호</th><th>이름</th><th>보호자</th></tr></thead><tbody>
-        ${S.students.map(s => `<tr class="click" data-no="${s.no}"><td class="num">${s.no}</td><td>${esc(s.name)}</td><td>${esc(s.guardian) || '<span class="hint">—</span>'}</td></tr>`).join('')}
+        ${S.students.map(s => `<tr class="click" data-no="${s.no}"><td class="num">${s.no}</td><td>${esc(s.name)}${s.koName ? ` <span class="hint">(${esc(s.koName)})</span>` : ''}</td><td>${esc(s.guardian) || '<span class="hint">—</span>'}</td></tr>`).join('')}
       </tbody></table>` : '<div class="empty">아직 학생이 없습니다. CSV를 올려 주세요.</div>'}
     </div>`;
 
@@ -1346,7 +1349,7 @@ function previewRoster({ students, errors, skipped }) {
     ${errors.length ? `<div class="hint warn">${errors.slice(0, 10).map(esc).join('<br>')}${errors.length > 10 ? `<br>외 ${errors.length - 10}건` : ''}</div>` : ''}
     <div style="max-height:46vh;overflow:auto;margin-top:10px;">
       <table class="tbl"><thead><tr><th>번호</th><th>이름</th><th>보호자</th></tr></thead><tbody>
-      ${students.map(s => `<tr><td class="num">${s.no}</td><td>${esc(s.name)}</td><td>${esc(s.guardian)}</td></tr>`).join('')}
+      ${students.map(s => `<tr><td class="num">${s.no}</td><td>${esc(s.name)}${s.koName ? ` <span class="hint">(${esc(s.koName)})</span>` : ''}</td><td>${esc(s.guardian)}</td></tr>`).join('')}
       </tbody></table>
     </div>
     <div class="actions"><button class="btn" id="mCancel">취소</button><button class="btn accent" id="mGo" ${students.length ? '' : 'disabled'}>이대로 저장</button></div>`,
@@ -1367,6 +1370,7 @@ function editStudent(s) {
       <div class="field"><label>번호</label><input class="inp" type="number" min="1" max="99" id="sNo" value="${s?.no ?? ''}"></div>
       <div class="field" style="grid-column:span 2;"><label>이름</label><input class="inp" id="sName" maxlength="40" value="${esc(s?.name)}"></div>
     </div>
+    <div class="field"><label>한글 이름 <span class="hint">(영어 이름일 때만 — 신고서에 "영어이름(한글이름)"으로 나옵니다)</span></label><input class="inp" id="sKo" maxlength="40" value="${esc(s?.koName)}"></div>
     <div class="field"><label>보호자 이름</label><input class="inp" id="sGuard" maxlength="40" value="${esc(s?.guardian)}"></div>
     <div class="actions">
       ${s ? '<button class="btn danger left" id="sDel">삭제</button>' : ''}
@@ -1380,12 +1384,12 @@ function editStudent(s) {
       try { await store.deleteStudent(S.cls.id, s.no); closeModal(); } catch (e) { fail(e); }
     });
     q('#sSave').onclick = async () => {
-      const no = +q('#sNo').value, name = q('#sName').value.trim(), guardian = q('#sGuard').value.trim();
+      const no = +q('#sNo').value, name = q('#sName').value.trim(), koName = q('#sKo').value.trim(), guardian = q('#sGuard').value.trim();
       if (!Number.isInteger(no) || no < 1 || no > 99) return toast('번호는 1~99입니다.');
       if (!name) return toast('이름을 입력하세요.');
       if (no !== s?.no && byNo(no)) return toast(`${no}번은 이미 있습니다.`);
       try {
-        await store.saveStudent(S.cls.id, { no, name, guardian });
+        await store.saveStudent(S.cls.id, { no, name, koName, guardian });
         if (s && s.no !== no) await store.deleteStudent(S.cls.id, s.no);
         closeModal();
       } catch (e) { fail(e); }
@@ -1394,6 +1398,28 @@ function editStudent(s) {
 }
 
 // ── 설정 탭 ─────────────────────────────────────────
+
+/**
+ * 도장 사진 → 작은 PNG. 160px 안으로 줄이고, 거의 흰 바탕은 투명하게 만든다
+ * (종이 위에 찍은 도장 사진이 신고서 글자를 가리지 않게).
+ */
+async function stampFromImage(file) {
+  const bmp = await window.createImageBitmap(file).catch(() => { throw new Error('이미지 파일을 읽지 못했습니다.'); });
+  const k = Math.min(1, 160 / Math.max(bmp.width, bmp.height));
+  const cv = document.createElement('canvas');
+  cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0, cv.width, cv.height);
+  const img = g.getImageData(0, 0, cv.width, cv.height), d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const lo = Math.min(d[i], d[i + 1], d[i + 2]);  // 흰색에 가까울수록 투명, 진할수록 불투명
+    d[i + 3] = Math.min(d[i + 3], lo > 225 ? 0 : lo < 170 ? 255 : Math.round(255 * (225 - lo) / 55));
+  }
+  g.putImageData(img, 0, 0);
+  const url = cv.toDataURL('image/png');
+  if (url.length > 79000) throw new Error('도장 그림이 너무 큽니다. 더 단순한 사진을 써 주세요.');
+  return url;
+}
 
 function renderSettings(body) {
   const c = S.cls;
@@ -1404,6 +1430,18 @@ function renderSettings(body) {
       <h2>${c.year}학년도 ${c.grade}학년 ${c.cls}반</h2>
       <div class="field"><label>담임 이름 (확인서에 인쇄)</label>
         <div class="inline"><input class="inp" id="tName" maxlength="20" value="${esc(c.teacherName)}"><button class="btn sm accent" id="tSave">저장</button></div></div>
+    </div>
+
+    <div class="card">
+      <h2>담임 도장</h2>
+      <p class="hint">도장 사진을 올리면 신고서 담임 <b>(인)</b> 자리에 찍힙니다. 흰 종이에 찍은 도장 사진이면 배경은 자동으로 투명해집니다.
+      본인·보호자 서명란은 직접 서명하도록 비워 둡니다.</p>
+      <div class="inline" style="margin-top:10px;align-items:center;gap:12px;">
+        ${c.stamp ? `<img src="${esc(c.stamp)}" alt="도장" style="width:64px;height:64px;object-fit:contain;background:#fff;border:1px solid var(--border-card);border-radius:8px;">` : '<span class="hint">아직 없음</span>'}
+        <input type="file" id="stampFile" accept="image/*" hidden>
+        <button class="btn sm accent" id="stampPick">${c.stamp ? '다시 올리기' : '도장 사진 올리기'}</button>
+        ${c.stamp ? '<button class="btn sm ghost" id="stampDel">지우기</button>' : ''}
+      </div>
     </div>
 
     <div class="card">
@@ -1430,6 +1468,18 @@ function renderSettings(body) {
     </div>`;
 
   $('tSave').onclick = () => store.updateClass(c.id, { teacherName: $('tName').value.trim() }).then(() => toast('저장했습니다.')).catch(fail);
+  $('stampPick').onclick = () => $('stampFile').click();
+  $('stampFile').onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const stamp = await stampFromImage(f);
+      await store.updateClass(c.id, { stamp });
+      toast('도장을 저장했습니다. 신고서 담임 (인) 자리에 찍힙니다.');
+    } catch (err) { err?.code ? fail(err) : toast(err?.message || '사진을 읽지 못했습니다.'); }
+  };
+  $('stampDel')?.addEventListener('click', () => store.updateClass(c.id, { stamp: '' }).then(() => toast('도장을 지웠습니다.')).catch(fail));
   $('oAdd').onclick = () => {
     const start = $('oStart').value, end = $('oEnd').value || start, label = $('oLabel').value.trim() || '재량휴업일';
     if (!isDateStr(start) || !isDateStr(end) || end < start) return toast('날짜를 확인하세요.');

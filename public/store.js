@@ -12,7 +12,7 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js?v=2610222341';
+import { db, auth } from './firebase-config.js?v=2610222350';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, onSnapshot, writeBatch, serverTimestamp,
@@ -164,6 +164,7 @@ export function updateClass(cid, patch) {
   const allowed = {};
   if ('teacherName' in patch) allowed.teacherName = patch.teacherName;
   if ('offDays' in patch) allowed.offDays = patch.offDays;
+  if ('stamp' in patch) allowed.stamp = patch.stamp;  // 담임 도장 그림(작은 PNG data URL), 빈 문자열이면 삭제
   return updateDoc(doc(db, 'classes', cid), { ...allowed, updatedAt: serverTimestamp() });
 }
 
@@ -179,10 +180,10 @@ const pick = (obj, keys) => Object.fromEntries(keys.map(k => [k, obj[k] ?? null]
 
 // ── 명렬표 ───────────────────────────────────────────
 
-const STUDENT_FIELDS = ['no', 'name', 'guardian'];
+const STUDENT_FIELDS = ['no', 'name', 'koName', 'guardian'];
 
 export function saveStudent(cid, s) {
-  const data = { ...pick(s, STUDENT_FIELDS), guardian: s.guardian || '', updatedAt: serverTimestamp() };
+  const data = { ...pick(s, STUDENT_FIELDS), koName: s.koName || '', guardian: s.guardian || '', updatedAt: serverTimestamp() };
   return setDoc(doc(sub(cid, 'students'), String(s.no)), data);
 }
 
@@ -196,7 +197,7 @@ export async function replaceRoster(cid, students, current) {
   const ops = [
     ...current.filter(s => !keep.has(String(s.no))).map(s => b => b.delete(doc(sub(cid, 'students'), String(s.no)))),
     ...students.map(s => b => b.set(doc(sub(cid, 'students'), String(s.no)), {
-      no: s.no, name: s.name, guardian: s.guardian || '', updatedAt: serverTimestamp(),
+      no: s.no, name: s.name, koName: s.koName || '', guardian: s.guardian || '', updatedAt: serverTimestamp(),
     })),
   ];
   await runBatches(ops);

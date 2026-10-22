@@ -99,6 +99,12 @@ await ok('담임(owner) 바꾸기 불가', assertFails(updateDoc(doc(kim, 'class
 
 console.log('\n[학생·기록·신고서 — 담임만]');
 await ok('명렬표 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/students/5'), { no: 5, name: '홍길동', guardian: '홍판서', updatedAt: serverTimestamp() })));
+await ok('명렬표에 한글이름', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/students/9'), { no: 9, name: 'KIM VIKTORIYA', koName: '김빅토리야', guardian: '', updatedAt: serverTimestamp() })));
+await ok('한글이름이 너무 길면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/9'), { no: 9, name: 'x', koName: 'ㄱ'.repeat(41), guardian: '', updatedAt: serverTimestamp() })));
+await ok('담임 도장(PNG) 저장', assertSucceeds(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: 'data:image/png;base64,iVBORw0KGgo=', updatedAt: serverTimestamp() })));
+await ok('도장이 PNG data URL이 아니면 거부', assertFails(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: 'https://evil.example/x.png', updatedAt: serverTimestamp() })));
+await ok('도장이 너무 크면 거부', assertFails(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: 'data:image/png;base64,' + 'A'.repeat(80000), updatedAt: serverTimestamp() })));
+await ok('도장 지우기', assertSucceeds(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: '', updatedAt: serverTimestamp() })));
 await ok('문서 ID와 번호가 다르면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/6'), { no: 7, name: 'x', guardian: '', updatedAt: serverTimestamp() })));
 await ok('명렬표에 허용 안 된 필드(주민번호 등) 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/8'), { no: 8, name: 'x', guardian: '', phone: '010', updatedAt: serverTimestamp() })));
 await ok('출결 기록 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/records/r1'), record())));
