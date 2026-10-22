@@ -8,12 +8,12 @@ import { getAuth, connectAuthEmulator } from "https://www.gstatic.com/firebasejs
  * 비어 있으면 앱이 "Firebase 설정이 필요합니다" 화면을 띄운다.
  */
 const firebaseConfig = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyAQfKHHjLJNQckQ2qKtKZSoWgPuMHB2D4w",
+  authDomain: "gwsattend.firebaseapp.com",
+  projectId: "gwsattend",
+  storageBucket: "gwsattend.firebasestorage.app",
+  messagingSenderId: "443564323705",
+  appId: "1:443564323705:web:3c7fd14700ce0c64c975a8"
 };
 
 // 로컬(localhost)에서는 에뮬레이터에 붙는다. 설정값이 비어 있어도 demo 프로젝트로 돈다.
