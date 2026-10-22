@@ -275,11 +275,6 @@ export async function listAllowed() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function addAllowed(email, note) {
-  const e = email.trim().toLowerCase();
-  return setDoc(doc(db, 'allowed', e), { email: e, note: note || '', addedAt: serverTimestamp() });
-}
-
 export const removeAllowed = email => deleteDoc(doc(db, 'allowed', email));
 
 export async function listAllClasses() {

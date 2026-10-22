@@ -30,7 +30,6 @@ const S = {
   tab: 'records',
   month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
   filterNo: '', todoOnly: false,
-  sel: new Set(),       // 출결 기록 선택(신고서 만들기)
   printSel: new Set(),  // 신고서 선택(출력)
   unsubs: [],
   adminOnly: false,
@@ -309,7 +308,7 @@ function enterClass(c, tab) {
   S.cls = c;
   S.students = []; S.records = []; S.reports = [];
   S.loaded = { students: false, records: false, reports: false };
-  S.sel.clear(); S.printSel.clear();
+  S.printSel.clear();
   if (tab) S.tab = tab;
   try { localStorage.setItem(CLASS_KEY, c.id); } catch {}
   $('classPill').textContent = `${c.grade}학년 ${c.cls}반`;
@@ -343,8 +342,9 @@ const TABS = [
   ['admin', '관리'],
 ];
 
+/** 아직 만들지 않은 신고서 장수(이어진 기록은 한 장) — 탭 배지와 안내 문구가 같은 숫자를 쓴다 */
 function todoCount() {
-  return S.records.filter(r => needsReport(r.cause) && !r.reportId).length;
+  return groupForReports(S.records, offDays()).length;
 }
 
 let renderQueued = false;
@@ -362,7 +362,7 @@ function render() {
     const n = todoCount();
     app.innerHTML = `
       <div class="tabs">${TABS.filter(([k]) => k !== 'admin' || S.admin).map(([k, label]) => `
-        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="신고서가 필요한 기록">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
+        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="아직 만들지 않은 신고서">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
       </div>
       <div id="tabBody"></div>`;
     app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
@@ -393,7 +393,7 @@ function bindMonthNav(root) {
       if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
       S.month = `${y}-${String(m).padStart(2, '0')}`;
     }
-    S.sel.clear(); S.printSel.clear();
+    S.printSel.clear();
     render();
   });
 }
@@ -423,26 +423,22 @@ function renderRecords(body) {
   const noRoster = S.loaded.students && !S.students.length;
   const groups = monthGroups();
   body.innerHTML = `
-    ${groups.length ? `<div class="card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <span style="flex:1;min-width:200px;"><b>신고서 ${groups.length}장</b>을 만들 수 있습니다
-        <span class="hint">— ${S.month === 'all' ? '전체 기간' : '이 달'}, 아직 신고서가 없는 질병·출석인정 기록을 학생별로 묶었습니다.</span></span>
-      <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>한 번에 만들기</button>
-    </div>` : ''}
     ${noRoster ? `<div class="card"><b>명렬표가 비어 있습니다.</b> <span class="hint">명렬표 탭에서 CSV를 먼저 올려 주세요. 등록된 학생만 기록할 수 있습니다.</span>
       <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm accent" data-go="students">명렬표 올리기</button></div></div>` : ''}
     <div class="toolbar">
+      <button class="btn accent" id="btnNewRec" ${noRoster ? 'disabled' : ''}><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>기록 추가</button>
       ${monthNav()}
       <span class="grow"></span>
       <select class="inp" id="fNo">${`<option value="">전체 학생</option>` + S.students.map(s => `<option value="${s.no}" ${String(s.no) === String(S.filterNo) ? 'selected' : ''}>${esc(studentLabel(s))}</option>`).join('')}</select>
-      <label class="check" style="margin:0;"><input type="checkbox" id="fTodo" ${S.todoOnly ? 'checked' : ''}>할 일만</label>
-      <button class="btn sm accent" id="btnNewRec" ${noRoster ? 'disabled' : ''}><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>기록 추가</button>
+      <label class="check" style="margin:0;" title="신고서·서류·나이스 중 처리 안 된 것이 있는 기록만"><input type="checkbox" id="fTodo" ${S.todoOnly ? 'checked' : ''}>미처리만</label>
     </div>
+    ${groups.length ? `<div class="notice">
+      <span><b>신고서 ${groups.length}장</b>을 아직 만들지 않았습니다 <span class="hint">(${S.month === 'all' ? '전체 기간' : '이 달'})</span></span>
+      <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>한 번에 만들기</button>
+    </div>` : ''}
     <div class="list">
       ${!S.loaded.records ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(recordRow).join('') : '<div class="empty">기록이 없습니다.</div>'}
-    </div>
-    ${S.sel.size ? `<div class="selbar"><span>${S.sel.size}건 선택</span>
-      <span><button class="btn sm ghost" id="selClear">선택 해제</button>
-      <button class="btn sm accent" id="selReport">신고서 만들기</button></span></div>` : ''}`;
+    </div>`;
 
   body.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.tab = b.dataset.go; render(); });
   bindMonthNav(body);
@@ -453,13 +449,9 @@ function renderRecords(body) {
   body.querySelectorAll('.row[data-id]').forEach(row => {
     const id = row.dataset.id;
     row.onclick = e => {
-      if (e.target.closest('input,button')) return;
+      if (e.target.closest('button')) return;
       openRecord(S.records.find(r => r.id === id));
     };
-    row.querySelector('input[type=checkbox]')?.addEventListener('change', e => {
-      e.target.checked ? S.sel.add(id) : S.sel.delete(id);
-      render();
-    });
     row.querySelector('[data-neis]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       store.setRecordFlag(S.cls.id, id, { neis: !r.neis }).catch(fail);
@@ -475,12 +467,9 @@ function renderRecords(body) {
       else editForRecord(r);
     });
   });
-  $('selClear')?.addEventListener('click', () => { S.sel.clear(); render(); });
-  $('selReport')?.addEventListener('click', () => makeReport(S.records.filter(r => S.sel.has(r.id))));
 }
 
 function recordRow(r) {
-  const canSel = needsReport(r.cause) && !r.reportId;
   const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r);
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
@@ -489,8 +478,7 @@ function recordRow(r) {
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
   return `
-    <div class="row" data-id="${esc(r.id)}">
-      <span>${canSel ? `<input type="checkbox" ${S.sel.has(r.id) ? 'checked' : ''} title="신고서로 묶을 기록 선택">` : ''}</span>
+    <div class="row rec" data-id="${esc(r.id)}">
       <span class="date">${rangeLabel(r)}</span>
       <div class="main">
         <div class="who">${r.no}번 ${esc(r.name)} <span class="chip c-${esc(r.cause)}">${esc(typeLabel(r))}</span> <span class="hint">${esc(detail)}</span></div>
@@ -549,7 +537,7 @@ function openRecord(existing) {
       <div class="grid3" style="margin-top:8px;">
         <div><input class="inp" type="date" id="rConfDate" value="${esc(r.confirmDate)}" title="확인 날짜"></div>
         <div class="inline"><input class="inp" id="rConfHour" maxlength="10" inputmode="numeric" value="${esc(r.confirmHour)}" title="확인 시각"><span>시</span></div>
-        <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자 (예: 어머님)" value="${esc(r.talker)}"></div>
+        <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자" value="${esc(r.talker)}"></div>
       </div>` : ''}
     </div>
     <div class="field" style="margin-bottom:0;"><span class="lab">첨부 서류</span>
@@ -657,7 +645,7 @@ function openRecord(existing) {
       const linked = existing.reportId && S.reports.some(p => p.id === existing.reportId);
       if (!confirm(`${existing.name} ${rangeLabel(existing).replace('<br>', '')} ${typeLabel(existing)} 기록을 삭제할까요?`
         + (linked ? '\n\n이 기록으로 만든 신고서는 지워지지 않으니, 필요 없으면 신고서 탭에서 따로 지우세요.' : ''))) return;
-      try { await store.deleteRecord(S.cls.id, existing.id); S.sel.delete(existing.id); closeModal(); toast('삭제했습니다.'); }
+      try { await store.deleteRecord(S.cls.id, existing.id); closeModal(); toast('삭제했습니다.'); }
       catch (e) { fail(e); }
     });
     const save = async thenReport => {
@@ -690,6 +678,13 @@ function reportDates(p) {
   return [it.late?.date, it.early?.date, it.result?.date, it.absent?.start, it.absent?.end].filter(Boolean).sort();
 }
 
+/** 신고서 목록의 날짜 칸: 출결 날짜(기간이면 시작~끝) */
+function reportDateLabel(p) {
+  const d = reportDates(p);
+  if (!d.length) return shortLabel(p.written);
+  return d[0] === d.at(-1) ? shortLabel(d[0]) : `${shortLabel(d[0])}~<br>${shortLabel(d.at(-1))}`;
+}
+
 function reportSummary(p) {
   const it = p.items || {};
   const parts_ = [];
@@ -708,36 +703,34 @@ function renderReports(body) {
   const todo = todoCount();
 
   body.innerHTML = `
-    ${todo ? `<div class="card"><b>신고서가 아직 없는 기록이 ${todo}건 있습니다.</b>
-      <span class="hint">학생별로 이어진 기록끼리 묶어 ${groupForReports(S.records, offDays()).length}장으로 만듭니다. 만든 뒤 확인하고 출력하세요.</span>
-      <div class="actions" style="justify-content:flex-start;margin-top:10px;">
-        <button class="btn sm" id="goTodo">기록 보기</button>
-        <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>모두 만들기</button></div></div>` : ''}
     <div class="toolbar">
       ${monthNav()}
       <span class="grow"></span>
       <select class="inp" id="fNo">${`<option value="">전체 학생</option>` + S.students.map(s => `<option value="${s.no}" ${String(s.no) === String(S.filterNo) ? 'selected' : ''}>${esc(studentLabel(s))}</option>`).join('')}</select>
-      <button class="btn sm" id="btnAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>목록 전체 출력</button>
-      <button class="btn sm accent" id="btnNewRep"><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>빈 신고서</button>
+      <button class="btn sm" id="btnAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>이 목록 모두 출력</button>
     </div>
+    ${todo ? `<div class="notice">
+      <span><b>신고서 ${todo}장</b>을 아직 만들지 않았습니다 <span class="hint">(전체 기간, 이어진 기록은 한 장으로)</span></span>
+      <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>모두 만들기</button>
+    </div>` : ''}
     <div class="list">
       ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
         <div class="row" data-id="${esc(p.id)}">
           <span><input type="checkbox" ${S.printSel.has(p.id) ? 'checked' : ''} title="출력할 신고서 선택"></span>
-          <span class="date">${shortLabel(p.written)}<br><span class="hint">작성</span></span>
+          <span class="date">${reportDateLabel(p)}</span>
           <div class="main">
             <div class="who">${p.no}번 ${esc(p.name)} <span class="chip c-${esc(p.cause)}">${esc(p.cause)}</span></div>
-            <div class="sub">${esc(reportSummary(p))} · ${esc(p.reason || '사유 없음')}</div>
+            <div class="sub">${esc(reportSummary(p))} · ${esc(p.reason || '사유 없음')} · <span class="hint">작성 ${shortLabel(p.written)}</span></div>
           </div>
           <div class="flags"><button class="chip" data-print title="이 신고서 출력"><svg width="12" height="12"><use href="#ic-print"/></svg>출력</button></div>
         </div>`).join('') : '<div class="empty">신고서가 없습니다.</div>'}
     </div>
+    <p class="hint" style="margin-top:14px;">출결 기록 없이 신고서만 만들려면 <button class="linkish" id="btnNewRep">빈 신고서</button></p>
     ${S.printSel.size ? `<div class="selbar"><span>${S.printSel.size}장 선택</span>
       <span><button class="btn sm ghost" id="selClear">선택 해제</button>
       <button class="btn sm accent" id="selPrint">한 번에 출력</button></span></div>` : ''}`;
 
   bindMonthNav(body);
-  $('goTodo')?.addEventListener('click', () => { S.tab = 'records'; S.todoOnly = true; S.month = 'all'; render(); });
   $('todoBulk')?.addEventListener('click', () => makeGroups(groupForReports(S.records, offDays())));
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('btnAllPrint').onclick = () => printReports(list);
@@ -812,18 +805,6 @@ async function makeGroups(groups) {
     render();
   } catch (e) { fail(e); }
   finally { making = false; }
-}
-
-function makeReport(recs) {
-  const nos = new Set(recs.map(r => r.no));
-  if (nos.size > 1) return toast('같은 학생의 기록만 한 신고서로 묶을 수 있습니다.');
-  const usable = recs.filter(r => needsReport(r.cause));
-  if (!usable.length) return toast('질병·출석인정 기록만 신고서를 만들 수 있습니다.');
-  const { report, warnings } = reportFromRecords(usable, {
-    student: byNo(usable[0].no), teacherName: S.cls.teacherName || '', offDays: offDays(),
-  });
-  S.sel.clear();
-  openEditor(report, warnings);
 }
 
 // ── 신고서 편집기 ───────────────────────────────────
@@ -1317,7 +1298,8 @@ async function renderAdmin(body) {
   let allowed, classes;
   try { [allowed, classes] = await Promise.all([store.listAllowed(), store.listAllClasses()]); }
   catch (e) { fail(e); body.innerHTML = '<div class="empty">불러오지 못했습니다.</div>'; return; }
-  if (S.tab !== 'admin') return;
+  // 기다리는 사이 화면이 다시 그려졌으면(신청 목록 갱신 등) 이 결과는 버린다
+  if (S.tab !== 'admin' || !body.isConnected) return;
 
   const taken = new Map(classes.map(c => [c.id, c]));
   body.innerHTML = `
@@ -1335,20 +1317,14 @@ async function renderAdmin(body) {
     </div>
     <div class="card">
       <h2>사용 허용 계정 (${allowed.length})</h2>
-      <p class="hint">승인하면 여기에 자동으로 들어갑니다. 신청 없이 바로 허용하려면 직접 추가하세요(그 선생님은 로그인 후 반을 직접 등록).
-      삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
-      <div class="grid3" style="margin-top:10px;">
-        <div class="field" style="grid-column:span 2;"><label>이메일</label><input class="inp" id="aEmail" type="email" placeholder="teacher@gmail.com"></div>
-        <div class="field"><label>메모 (이름 등)</label><input class="inp" id="aNote" maxlength="40"></div>
-      </div>
-      <button class="btn sm accent" id="aAdd">추가</button>
-      <table class="tbl" style="margin-top:12px;"><tbody>
+      <p class="hint">신청을 승인하면 자동으로 들어갑니다. 삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
+      <table class="tbl" style="margin-top:8px;"><tbody>
         ${allowed.map(a => `<tr><td>${esc(a.id)}</td><td class="hint">${esc(a.note)}</td><td style="text-align:right;"><button class="btn sm ghost" data-rm="${esc(a.id)}">삭제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
       </tbody></table>
     </div>
     <div class="card">
       <h2>등록된 반 (${classes.length})</h2>
-      <p class="hint">"등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 다음에 그 반을 등록하는 선생님이 이어받습니다(담임 교체용).
+      <p class="hint">"등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 그 반으로 새로 승인받는 선생님이 이어받습니다(담임 교체용).
       관리자도 학생 정보는 볼 수 없습니다.</p>
       <table class="tbl" style="margin-top:8px;"><thead><tr><th>반</th><th>담임</th><th>계정</th><th></th></tr></thead><tbody>
         ${classes.map(c => `<tr><td>${c.year} ${c.grade}-${c.cls}</td><td>${esc(c.teacherName)}</td><td class="hint">${esc(c.ownerEmail)}</td>
@@ -1369,12 +1345,6 @@ async function renderAdmin(body) {
     try { await store.rejectRequest(rq.uid); } catch (e) { fail(e); }
   });
 
-  $('aAdd').onclick = async () => {
-    const email = $('aEmail').value.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('이메일 형식을 확인하세요.');
-    try { await store.addAllowed(email, $('aNote').value.trim()); toast('추가했습니다.'); render(); }
-    catch (e) { fail(e); }
-  };
   body.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
     if (!confirm(`${b.dataset.rm} 계정의 사용 허용을 해제할까요?`)) return;
     try { await store.removeAllowed(b.dataset.rm); render(); } catch (e) { fail(e); }

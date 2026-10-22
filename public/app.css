@@ -51,6 +51,7 @@
   border: 1px solid var(--border-card); cursor: pointer;
 }
 .row:hover { border-color: var(--accent); }
+.row.rec { grid-template-columns: 96px 1fr auto; }
 .row .date { font-weight: 700; font-size: 0.9rem; }
 .row .main { min-width: 0; }
 .row .who { font-weight: 700; }
@@ -62,7 +63,17 @@
   .row .date { grid-column: 2; }
   .row .main { grid-column: 2; }
   .row .flags { grid-column: 2; justify-content: flex-start; }
+  .row.rec { grid-template-columns: 1fr; }
+  .row.rec .date, .row.rec .main, .row.rec .flags { grid-column: 1; }
+  .tab { padding: 8px 11px; font-size: 0.88rem; }
 }
+/* 할 일 안내 줄: 카드보다 가볍게, 목록 바로 위 */
+.notice {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px 10px 16px; margin-bottom: 10px; border-radius: var(--radius-sm);
+  background: var(--accent-light); border: 1px solid var(--accent);
+}
+.linkish { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
 .empty { text-align: center; color: var(--text-3); padding: 40px 0; }
 
 .chip {
@@ -123,7 +134,7 @@ body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
 /* ── 신고서 편집 ── */
 .editor {
   position: fixed; inset: 0; z-index: 400; background: var(--bg); background-attachment: fixed;
-  display: grid; grid-template-columns: minmax(340px, 440px) 1fr; overflow: hidden;
+  display: grid; grid-template-columns: minmax(340px, 440px) minmax(0, 1fr); overflow: hidden;
 }
 .editor .form-col { overflow-y: auto; padding: 18px; border-right: 1px solid var(--hairline); }
 .editor .prev-col { overflow: auto; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -134,7 +145,7 @@ body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
 .period-row .inp { padding: 8px 10px; font-size: 0.9rem; }
 .period-row .check { margin: 0; font-weight: 700; }
 @media (max-width: 860px) {
-  .editor { grid-template-columns: 1fr; overflow-y: auto; }
+  .editor { grid-template-columns: minmax(0, 1fr); overflow-y: auto; overflow-x: hidden; }
   .editor .form-col { overflow: visible; border-right: 0; }
   .editor .prev-col { overflow: visible; }
 }
@@ -161,7 +172,9 @@ label.mini { display: block; font-size: 0.75rem; font-weight: 700; color: var(--
 }
 
 /* 미리보기: A4(794px)를 칸 폭에 맞게 줄인다 */
-.preview-box { width: 100%; max-width: 794px; }
+.preview-box { width: 100%; max-width: 794px; overflow: hidden; }
+.editor .prev-col { min-width: 0; }
+.period-row > * { min-width: 0; }
 .preview-scale { transform-origin: top left; box-shadow: var(--shadow); }
 .font-note { max-width: 794px; font-size: 0.8rem; color: var(--text-2); background: var(--glass); border-radius: var(--radius-sm); padding: 8px 12px; }
 
@@ -183,3 +196,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   #printArea .sheet { page-break-after: always; break-after: page; }
   #printArea .sheet:last-child { page-break-after: auto; break-after: auto; }
 }
+
+/* 알림은 화면 위쪽에 — 아래에 두면 입력창의 저장 버튼을 가린다 */
+.toast { bottom: auto; top: calc(var(--nav-h) + 12px); transform: translateX(-50%) translateY(-20px); z-index: 10000; }
+.toast.show { transform: translateX(-50%) translateY(0); }
