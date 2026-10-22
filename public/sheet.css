@@ -17,6 +17,7 @@
   fill: #000; stroke: none; font-weight: 400;
   font-kerning: none; font-variant-ligatures: none; letter-spacing: 0; word-spacing: 0;
   text-rendering: geometricPrecision;
+  font-variant-emoji: text; /* ☑를 컬러 이모지가 아닌 글자로 */
 }
 /* 굴림·한컴돋움: 한글(HWP)은 이 두 글꼴을 "채우기 + 윤곽선"으로 찍는다. 윤곽선 굵기는 form.js가 글자마다 */
 .sheet text.g  { font-family: "굴림", Gulim, "Nanum Gothic", "NanumGothic", sans-serif; stroke: #000; }

@@ -19,8 +19,8 @@
  *   dot — "출석인정 ․ 질병" 사이 점: 원본은 한컴돋움의 ․(U+2024). 한컴돋움이 없으면 굴림 ·
  *   선  — 0.36pt(사유명 밑줄·동그라미 0.48pt), 절취선은 지름 0.96pt 점을 1.2pt 간격으로
  */
-import { parts } from './dates.js?v=20261022a';
-import { circledKinds } from './model.js?v=20261022a';
+import { parts } from './dates.js?v=20261022b';
+import { circledKinds } from './model.js?v=20261022b';
 
 /** 고정 글자 [기준선 y, 크기, 글꼴, 글자, 글자마다 x] — 원본 빈 양식 그대로 */
 const STATIC = [
@@ -83,7 +83,9 @@ export const HB_FAMILY = '"함초롬돋움", "HCR Dotum", "HCRDotum", "Nanum Got
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const num = n => +n.toFixed(2);
 const len = v => String(v ?? '').length;
-const box = checked => (checked ? '☑' : '□');
+// ☑는 아이폰이 컬러 이모지로 바꿔 그린다. 뒤에 U+FE0E(글자 모양으로 표시)를 붙여 막는다.
+const CHECK = '☑\uFE0E';
+const box = checked => (checked ? CHECK : '□');
 
 /** 굴림·한컴돋움은 윤곽선도 같이(원본 PDF 글자 모드 "채우기+윤곽선", 굵기 = 글자 크기/100) */
 const strokeAttr = (cls, size) => (/^(g|hd)\b/.test(cls) ? ` stroke-width="${num(size / 100)}"` : '');
@@ -94,7 +96,12 @@ function fixed([y, size, cls, text, xs], dy = 0, opts = {}) {
     cls = opts.haansoftDotum ? 'hd' : 'g';
     text = opts.haansoftDotum ? '․' : '·';
   }
-  return `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${xs.join(' ')}" y="${num(y + dy)}">${esc(text)}</text>`;
+  // ☑는 따로 떼어 그린다(글자마다 x를 주는 목록에 FE0E가 끼면 뒤 글자 위치가 밀릴 수 있어서)
+  const at = (t, x) => `<text class="${cls}" font-size="${size}"${strokeAttr(cls, size)} x="${x.join(' ')}" y="${num(y + dy)}">${esc(t)}</text>`;
+  const i = text.indexOf('☑');
+  if (i < 0) return at(text, xs);
+  return (i ? at(text.slice(0, i), xs.slice(0, i)) : '') + at(CHECK, [xs[i]]) +
+    (i + 1 < text.length ? at(text.slice(i + 1), xs.slice(i + 1)) : '');
 }
 
 /**
