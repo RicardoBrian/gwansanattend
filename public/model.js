@@ -19,6 +19,30 @@ export const ITEM_KEYS = { 지각: 'late', 조퇴: 'early', 결과: 'result', �
 
 export const typeLabel = r => `${r.cause} ${r.kind}`;
 
+/**
+ * 교시: 지각은 "몇 교시에 등교", 조퇴는 "몇 교시부터 조퇴", 결과는 "몇~몇 교시".
+ * 저장은 문자열 하나 — 결과는 "3~4"(같으면 "3"). 신고서의 ( 교시) 칸에 그대로 들어간다.
+ */
+export function periodParts(period) {
+  const [from = '', to = ''] = String(period || '').split('~').map(x => x.trim());
+  return { from, to: to || from };
+}
+
+export function joinPeriod(from, to) {
+  from = String(from || '').trim(); to = String(to || '').trim();
+  if (!from) return to;
+  return to && to !== from ? `${from}~${to}` : from;
+}
+
+/** 목록에 보이는 교시 설명 */
+export function periodLabel(r) {
+  if (!r.period) return '';
+  if (r.kind === '지각') return `${r.period}교시 등교`;
+  if (r.kind === '조퇴') return `${r.period}교시부터 조퇴`;
+  const { from, to } = periodParts(r.period);
+  return from === to ? `${from}교시` : `${from}~${to}교시`;
+}
+
 export const CONFIRM_METHODS = ['가정방문', '전화연락', '기타'];
 
 /** 새 출결 기록 기본값 */

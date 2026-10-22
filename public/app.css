@@ -147,6 +147,9 @@ body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
 .zone-sec.on { background: var(--accent-light); border-color: var(--accent); }
 .zone-title { font-size: 0.85rem; font-weight: 800; margin-bottom: 8px; }
 .zone-sec.on .zone-title { color: var(--accent); }
+.period-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.period-line .period-inp { width: 56px; text-align: center; padding: 12px 6px; }
+.period-line span { font-size: 0.9rem; color: var(--text-2); white-space: nowrap; }
 .sub-box {
   border: 1px solid var(--border-card); border-radius: var(--radius-sm); background: var(--glass);
   padding: 12px; margin-bottom: 14px;

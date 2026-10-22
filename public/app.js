@@ -16,7 +16,7 @@ import {
 } from './dates.js';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
-  needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
+  needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
 } from './model.js';
 
 const $ = id => document.getElementById(id);
@@ -481,7 +481,7 @@ function renderRecords(body) {
 
 function recordRow(r) {
   const canSel = needsReport(r.cause) && !r.reportId;
-  const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : (r.period ? `${esc(r.period)}교시` : '');
+  const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r);
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
       ? '<button class="chip ok" data-report title="다시 출력 (고치려면 신고서 탭)"><svg width="12" height="12"><use href="#ic-print"/></svg>신고서 ✓</button>'
@@ -503,6 +503,15 @@ function recordRow(r) {
 }
 
 // ── 출결 기록 편집 ───────────────────────────────────
+
+/** 종류마다 교시 입력 모양이 다르다: 지각 [ ]교시 등교 / 조퇴 [ ]교시부터 조퇴 / 결과 [ ]교시부터 [ ]교시까지 */
+function periodInputs(r) {
+  const { from, to } = periodParts(r.period);
+  const box = (id, v) => `<input class="inp period-inp" id="${id}" maxlength="4" inputmode="numeric" value="${esc(v)}">`;
+  if (r.kind === '지각') return `<label>교시</label><div class="period-line">${box('rPFrom', from)}<span>교시에 등교</span></div>`;
+  if (r.kind === '조퇴') return `<label>교시</label><div class="period-line">${box('rPFrom', from)}<span>교시부터 조퇴</span></div>`;
+  return `<label>교시</label><div class="period-line">${box('rPFrom', from)}<span>교시부터</span>${box('rPTo', from === to ? '' : to)}<span>교시까지</span></div>`;
+}
 
 function openRecord(existing) {
   const r = existing ? { ...existing, docs: [...(existing.docs || [])] } : emptyRecord();
@@ -527,7 +536,7 @@ function openRecord(existing) {
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>` : `
       <div class="grid2">
         <div class="field"><label>날짜</label><input class="inp" type="date" id="rStart" value="${esc(r.start)}"></div>
-        <div class="field"><label>교시</label><input class="inp" id="rPeriod" maxlength="10" placeholder="예: 5" value="${esc(r.period)}"></div>
+        <div class="field">${periodInputs(r)}</div>
       </div>
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>`}
     <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}"></div>
@@ -561,7 +570,7 @@ function openRecord(existing) {
     r.name = byNo(no)?.name || (no === existing?.no ? existing.name : '');
     r.start = v('rStart').value;
     if (r.kind === '결석') { r.end = v('rEnd').value || r.start; r.days = v('rDays').value; }
-    else r.period = v('rPeriod').value.trim();
+    else r.period = r.kind === '결과' ? joinPeriod(v('rPFrom').value, v('rPTo').value) : v('rPFrom').value.trim();
     r.reason = v('rReason').value.trim();
     // 신고서용 칸은 질병·출석인정일 때만 화면에 있다 — 없을 때는 값을 그대로 둔다.
     if (v('rDocs')) {
@@ -833,7 +842,7 @@ function drawEditor() {
     return `<div class="period-row">
       <label class="check"><input type="checkbox" data-item="${key}" ${v ? 'checked' : ''}>${label}</label>
       <input class="inp" type="date" data-f="${key}.date" value="${esc(v?.date || '')}" ${v ? '' : 'disabled'}>
-      <input class="inp" data-f="${key}.period" placeholder="교시" maxlength="10" value="${esc(v?.period || '')}" ${v ? '' : 'disabled'}>
+      <input class="inp" data-f="${key}.period" placeholder="${key === 'result' ? '예: 3~4' : '교시'}" maxlength="10" value="${esc(v?.period || '')}" ${v ? '' : 'disabled'}>
     </div>`;
   };
   const ab = it.absent;

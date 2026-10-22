@@ -93,3 +93,16 @@ test('작성일은 마지막 출결일 다음 수업일(오늘이 더 이르면 
   const r3 = reportFromRecords([rec({ start: '2026-10-22', end: '2026-10-22' })], { today: '2026-10-22' }).report;
   assert.equal(r3.written, '2026-10-22');
 });
+
+import { periodParts, joinPeriod, periodLabel } from '../public/model.js';
+
+test('교시: 지각 등교, 조퇴부터, 결과 몇~몇', () => {
+  assert.equal(joinPeriod('3', '4'), '3~4');
+  assert.equal(joinPeriod('3', '3'), '3');
+  assert.equal(joinPeriod('3', ''), '3');
+  assert.deepEqual(periodParts('3~4'), { from: '3', to: '4' });
+  assert.deepEqual(periodParts('5'), { from: '5', to: '5' });
+  assert.equal(periodLabel({ kind: '지각', period: '2' }), '2교시 등교');
+  assert.equal(periodLabel({ kind: '조퇴', period: '5' }), '5교시부터 조퇴');
+  assert.equal(periodLabel({ kind: '결과', period: '3~4' }), '3~4교시');
+});
