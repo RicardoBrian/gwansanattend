@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=20261022b';
-import * as store from './store.js?v=20261022b';
-import { renderSheet } from './form.js?v=20261022b';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=20261022b';
+import { CONFIGURED } from './firebase-config.js?v=20261022c';
+import * as store from './store.js?v=20261022c';
+import { renderSheet } from './form.js?v=20261022c';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=20261022c';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=20261022b';
+} from './dates.js?v=20261022c';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=20261022b';
+} from './model.js?v=20261022c';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,10 +55,12 @@ function toast(msg) {
 
 function fail(e) {
   console.error(e);
-  const msg = e?.code === 'permission-denied'
-    ? '권한이 없습니다. 허용된 계정인지, 내 반이 맞는지 확인하세요.'
-    : (e?.message || String(e));
-  toast(msg);
+  if (e?.code !== 'permission-denied') return toast(e?.message || String(e));
+  toast('저장이 거절되었습니다. 원인을 확인하는 중…');
+  // 계정·반 문제인지, 내용이 규칙 한도를 넘은 것인지 가려서 알려 준다
+  store.diagnoseAccess(S.cls?.id).then(why => toast(why
+    || '저장이 거절되었습니다. 계정과 반은 정상이라, 글자 수가 너무 많거나 예전 형식의 기록이 연결된 경우입니다. 첨부·사유를 줄이거나 연결된 기록을 확인하세요.'))
+    .catch(() => toast('저장이 거절되었습니다. 허용된 계정인지, 내 반이 맞는지 확인하세요.'));
 }
 
 function openModal(html, bind) {
@@ -1201,8 +1203,16 @@ function showZone(scroll = false) {
   if (scroll) hl.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
+/** firestore.rules의 글자 수 한도 — 넘으면 서버가 "권한 없음"으로만 알려 주므로 미리 알린다 */
+const REPORT_LIMITS = [['reason', 200, '2. 사유'], ['attach', 400, '2. 첨부'], ['selfName', 40, '본인'], ['guardianName', 40, '보호자'],
+  ['talker', 30, '대화자'], ['methodEtc', 60, '기타 확인방법'], ['confirmHour', 10, '시'], ['teacherName', 20, '담임 이름']];
+
 function validateReport(r) {
   if (!r.no) return '학생을 선택하세요.';
+  for (const [k, max, label] of REPORT_LIMITS) {
+    const n = String(r[k] ?? '').length;
+    if (n > max) return `${label}이(가) 너무 깁니다(${n}자, 최대 ${max}자).`;
+  }
   const it = r.items;
   if (!it.late && !it.early && !it.result && !it.absent) return '1. 기간에서 하나 이상 체크하세요.';
   for (const k of ['late', 'early', 'result']) if (it[k] && !isDateStr(it[k].date)) return '기간의 날짜를 입력하세요.';
@@ -1455,14 +1465,14 @@ async function renderAdmin(body) {
     </div>
     <div class="card">
       <h2>사용 허용 계정 (${allowed.length})</h2>
-      <p class="hint">신청을 승인하면 자동으로 들어갑니다. 삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
+      <p class="hint"><b>누가 이 앱에 들어올 수 있나</b>(이메일 명단). 신청을 승인하면 자동으로 들어갑니다. 삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
       <table class="tbl" style="margin-top:8px;"><tbody>
         ${allowed.map(a => `<tr><td>${esc(a.id)}</td><td class="hint">${esc(a.note)}</td><td style="text-align:right;"><button class="btn sm ghost" data-rm="${esc(a.id)}">삭제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
       </tbody></table>
     </div>
     <div class="card">
       <h2>등록된 반 (${classes.length})</h2>
-      <p class="hint">"등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 그 반으로 새로 승인받는 선생님이 이어받습니다(담임 교체용).
+      <p class="hint"><b>어느 반을 누가 맡았나</b>(반↔담임 계정). 선생님이 신청하고 승인하면 위 명단과 이 목록에 같이 올라갑니다. "등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 그 반으로 새로 승인받는 선생님이 이어받습니다(담임 교체용).
       관리자도 학생 정보는 볼 수 없습니다.</p>
       <table class="tbl" style="margin-top:8px;"><thead><tr><th>반</th><th>담임</th><th>계정</th><th></th></tr></thead><tbody>
         ${classes.map(c => `<tr><td>${c.year} ${c.grade}-${c.cls}</td><td>${esc(c.teacherName)}</td><td class="hint">${esc(c.ownerEmail)}</td>

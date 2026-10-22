@@ -19,8 +19,8 @@
  *   dot — "출석인정 ․ 질병" 사이 점: 원본은 한컴돋움의 ․(U+2024). 한컴돋움이 없으면 굴림 ·
  *   선  — 0.36pt(사유명 밑줄·동그라미 0.48pt), 절취선은 지름 0.96pt 점을 1.2pt 간격으로
  */
-import { parts } from './dates.js?v=20261022b';
-import { circledKinds } from './model.js?v=20261022b';
+import { parts } from './dates.js?v=20261022c';
+import { circledKinds } from './model.js?v=20261022c';
 
 /** 고정 글자 [기준선 y, 크기, 글꼴, 글자, 글자마다 x] — 원본 빈 양식 그대로 */
 const STATIC = [

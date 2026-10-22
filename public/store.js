@@ -12,7 +12,7 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js?v=20261022b';
+import { db, auth } from './firebase-config.js?v=20261022c';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, onSnapshot, writeBatch, serverTimestamp,
@@ -63,6 +63,28 @@ export async function signIn() {
       await signInWithRedirect(auth, provider);
     } else throw e;
   }
+}
+
+/**
+ * 저장이 "권한 없음"으로 거절됐을 때 이유를 좁힌다 — 규칙은 어느 문서가 문제인지 알려 주지 않는다.
+ * @returns {Promise<string>} 사람이 읽을 이유(못 찾으면 '')
+ */
+export async function diagnoseAccess(cid) {
+  const user = auth.currentUser;
+  if (!user) return '로그인이 풀렸습니다. 다시 로그인하세요.';
+  const email = (user.email || '').toLowerCase();
+  const [allowed, admin] = await Promise.all([
+    getDoc(doc(db, 'allowed', email)).catch(() => null),
+    getDoc(doc(db, 'admins', email)).catch(() => null),
+  ]);
+  if (!allowed?.exists() && !admin?.exists()) return `${email} 계정이 "사용 허용 계정"에 없습니다. 관리자에게 알려 주세요.`;
+  if (cid) {
+    const c = await getDoc(doc(db, 'classes', cid)).catch(() => null);
+    if (!c) return '이 반 정보를 읽을 수 없습니다. 이 반의 담임으로 등록된 계정과 지금 로그인한 계정(' + email + ')이 같은지 관리자에게 확인하세요.';
+    if (!c.exists()) return '이 반이 등록 해제되었습니다. 관리자에게 알려 주세요.';
+    if (c.data().ownerUid !== user.uid) return `이 반 담임으로 등록된 계정(${c.data().ownerEmail})과 지금 로그인한 계정(${email})이 다릅니다.`;
+  }
+  return '';
 }
 
 export const signOut = () => { stamp.clear(); return fbSignOut(auth); };
