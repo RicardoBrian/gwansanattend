@@ -178,6 +178,8 @@ label.mini { display: block; font-size: 0.75rem; font-weight: 700; color: var(--
 .preview-scale { transform-origin: top left; box-shadow: var(--shadow); }
 .font-note { max-width: 794px; font-size: 0.8rem; color: var(--text-2); background: var(--glass); border-radius: var(--radius-sm); padding: 8px 12px; }
 
+.selall { display: flex; align-items: center; gap: 8px; padding: 6px 4px 10px; font-size: 0.85rem; font-weight: 700; cursor: pointer; }
+
 /* ── 표(관리·명렬표) ── */
 table.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .tbl th, .tbl td { padding: 8px 6px; border-bottom: 1px solid var(--hairline); text-align: left; }

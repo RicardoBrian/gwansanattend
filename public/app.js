@@ -778,6 +778,7 @@ function renderReportPane(el) {
         : `<button class="btn sm" id="pAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>모두 출력</button>`}
     </div>
     <p class="hint" style="margin:-4px 0 10px;">왼쪽에서 출결 기록을 누르면 여기서 그 신고서를 바로 고칩니다.</p>
+    ${list.length ? `<label class="selall"><input type="checkbox" id="selAll" ${list.every(p => S.printSel.has(p.id)) ? 'checked' : ''}> 전체 선택 <span class="hint">(체크를 풀면 그 신고서만 빠집니다)</span></label>` : ''}
     <div class="list compact">
       ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
         <div class="row" data-id="${esc(p.id)}">
@@ -801,10 +802,18 @@ function renderReportPane(el) {
     };
     row.querySelector('input[type=checkbox]').onchange = e => { e.target.checked ? S.printSel.add(p.id) : S.printSel.delete(p.id); render(); };
   });
+  bindSelAll(el, list);
   $('pAllPrint')?.addEventListener('click', () => printReports(list));
   $('pSelPrint')?.addEventListener('click', () => printReports(list.filter(p => S.printSel.has(p.id))));
   $('pSelClear')?.addEventListener('click', () => { S.printSel.clear(); render(); });
   $('btnNewRep').onclick = pickStudentForReport;
+}
+
+/** 전체 선택: 이 목록의 신고서를 모두 고르거나 모두 푼다. 이어서 한 장만 풀면 그 장만 빠진다. */
+function bindSelAll(root, list) {
+  const box = root.querySelector('#selAll');
+  if (!box) return;
+  box.onchange = () => { for (const p of list) box.checked ? S.printSel.add(p.id) : S.printSel.delete(p.id); render(); };
 }
 
 function renderReports(body) {
@@ -822,6 +831,7 @@ function renderReports(body) {
       <span><b>신고서 ${todo}장</b>을 아직 만들지 않았습니다 <span class="hint">(전체 기간, 이어진 기록은 한 장으로)</span></span>
       <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>모두 만들기</button>
     </div>` : ''}
+    ${list.length ? `<label class="selall"><input type="checkbox" id="selAll" ${list.every(p => S.printSel.has(p.id)) ? 'checked' : ''}> 전체 선택 <span class="hint">(체크를 풀면 그 신고서만 빠집니다)</span></label>` : ''}
     <div class="list">
       ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
         <div class="row" data-id="${esc(p.id)}">
@@ -839,6 +849,7 @@ function renderReports(body) {
       <span><button class="btn sm ghost" id="selClear">선택 해제</button>
       <button class="btn sm accent" id="selPrint">한 번에 출력</button></span></div>` : ''}`;
 
+  bindSelAll(body, list);
   bindMonthNav(body);
   $('todoBulk')?.addEventListener('click', () => makeGroups(groupForReports(S.records, offDays())));
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
