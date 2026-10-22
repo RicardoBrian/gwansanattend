@@ -1,0 +1,11 @@
+# Cloudflare Pages 응답 헤더
+# - no-cache: 매번 서버에 "바뀌었나?"를 물어본다(안 바뀌었으면 다시 받지 않음).
+#   배포 직후 선생님 브라우저가 예전 app.js를 계속 쓰는 일을 막는다.
+# - 나머지: 다른 사이트가 이 앱을 몰래 iframe에 넣어 클릭을 가로채거나(클릭재킹),
+#   주소를 다른 사이트로 흘리지 못하게 한다.
+/*
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
