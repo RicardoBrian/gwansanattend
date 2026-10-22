@@ -12,27 +12,49 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js';
+import { db, auth } from './firebase-config.js?v=20261022a';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, onSnapshot, writeBatch, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut as fbSignOut, onAuthStateChanged,
-  setPersistence, browserSessionPersistence,
+  setPersistence, browserLocalPersistence,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 // ── 로그인 ───────────────────────────────────────────
 
+// 로그인은 3일 동안 유지한다. Firebase는 기간을 정할 수 없어(브라우저에 계속 남음) 로그인한 시각을
+// 브라우저에 적어 두고, 3일이 지나면 열 때 로그아웃시킨다.
+const LOGIN_DAYS = 3;
+const STAMP = 'gwsattend.loginAt';
+const stamp = {
+  get() { try { return Number(localStorage.getItem(STAMP)) || 0; } catch { return 0; } },
+  set(t = Date.now()) { try { localStorage.setItem(STAMP, String(t)); } catch { /* 저장 불가 환경이면 브라우저 설정대로 */ } },
+  clear() { try { localStorage.removeItem(STAMP); } catch { /* 위와 같음 */ } },
+};
+
 export function watchAuth(cb) {
-  return onAuthStateChanged(auth, cb);
+  return onAuthStateChanged(auth, async user => {
+    if (user) {
+      const at = stamp.get();
+      if (!at) stamp.set();  // 이 기능 이전에 로그인한 기기: 지금부터 3일
+      else if (Date.now() - at > LOGIN_DAYS * 86400000) {
+        stamp.clear();
+        await fbSignOut(auth);
+        return;  // 로그아웃되면 이 리스너가 user=null로 다시 불린다
+      }
+    }
+    cb(user);
+  });
 }
 
 export async function signIn() {
-  // 교무실 공용 PC에서 다음 사람이 그대로 들어오지 않게, 브라우저를 닫으면 로그아웃된다.
-  await setPersistence(auth, browserSessionPersistence);
+  // 브라우저를 닫아도 3일은 로그인이 남는다(위 watchAuth). 공용 PC에서는 꼭 [로그아웃]을 누른다.
+  await setPersistence(auth, browserLocalPersistence);
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
+  stamp.set();
   try {
     await signInWithPopup(auth, provider);
   } catch (e) {
@@ -43,7 +65,7 @@ export async function signIn() {
   }
 }
 
-export const signOut = () => fbSignOut(auth);
+export const signOut = () => { stamp.clear(); return fbSignOut(auth); };
 
 const emailOf = user => (user.email || '').toLowerCase();
 

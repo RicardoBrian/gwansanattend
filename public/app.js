@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js';
-import * as store from './store.js';
-import { renderSheet } from './form.js';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js';
+import { CONFIGURED } from './firebase-config.js?v=20261022a';
+import * as store from './store.js?v=20261022a';
+import { renderSheet } from './form.js?v=20261022a';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=20261022a';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js';
+} from './dates.js?v=20261022a';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js';
+} from './model.js?v=20261022a';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
