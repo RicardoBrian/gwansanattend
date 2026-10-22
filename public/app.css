@@ -100,9 +100,6 @@ button.chip { cursor: pointer; font-family: inherit; }
 }
 .seg button.on { background: #1d1d1f; color: #fff; border-color: transparent; }
 body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
-.presets { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
-.presets button { font-family: inherit; font-size: 0.78rem; padding: 4px 10px; border-radius: var(--radius-pill); border: 1px dashed var(--text-3); background: transparent; color: var(--text-2); cursor: pointer; }
-.presets button.on { border-style: solid; background: var(--accent-light); color: var(--accent); border-color: transparent; }
 .check { display: inline-flex; align-items: center; gap: 7px; font-size: 0.92rem; cursor: pointer; margin-right: 14px; }
 .check input { width: 18px; height: 18px; }
 .inline { display: flex; gap: 8px; align-items: center; }
@@ -140,6 +137,20 @@ body.dark .seg button.on { background: #f5f5f7; color: #1d1d1f; }
   .editor { grid-template-columns: 1fr; overflow-y: auto; }
   .editor .form-col { overflow: visible; border-right: 0; }
   .editor .prev-col { overflow: visible; }
+}
+
+/* 구역: 지금 쓰고 있는 묶음과 신고서의 같은 자리를 함께 표시 */
+.zone-sec {
+  padding: 10px 12px 12px; margin: 0 -12px 6px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.zone-sec.on { background: var(--accent-light); border-color: var(--accent); }
+.zone-title { font-size: 0.85rem; font-weight: 800; margin-bottom: 8px; }
+.zone-sec.on .zone-title { color: var(--accent); }
+label.mini { display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-3); margin-bottom: 4px; }
+.sheet .zone-hl {
+  position: absolute; border-radius: 6px; pointer-events: none;
+  background: rgba(0, 113, 227, 0.10); outline: 2px solid rgba(0, 113, 227, 0.6);
 }
 
 /* 미리보기: A4(794px)를 칸 폭에 맞게 줄인다 */

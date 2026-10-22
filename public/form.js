@@ -176,14 +176,14 @@ export function renderSheet(r) {
     slot([395.5 - FRAME.left, 479.5 - FRAME.left], +(762.9 - BLOCK_TOP).toFixed(1), 12.0, 12, r.teacherName, 'g'),
   ].join('');
 
-  // 담임확인서(상기명 학생은 …) 처럼 괄호로 설명을 붙이면, 줄이 넘어갈 때
-  // 둘째 줄부터 "(" 아래에 맞춘다 — 원본 예시가 그렇게 쓰여 있다.
+  // 담임확인서(상기명 학생은 …) 처럼 괄호로 설명을 붙이면, 괄호 안 내용 전체가
+  // "담임확인서(" 오른쪽 칸에 들어가고 둘째 줄부터도 괄호 안 첫 글자에 맞춘다.
   // 괄호 앞부분이 한 줄의 절반을 넘으면 들여쓰지 않는다.
   const attach = String(r.attach ?? '');
   const open = attach.indexOf('(');
-  const head = open > 0 ? attach.slice(0, open) : '';
+  const head = open > 0 ? attach.slice(0, open + 1) : '';
   const attachHtml = head && emWidth(head) * 12 < (ATTACH_RIGHT - ATTACH_X) / 2
-    ? `<span class="att-head">${esc(head)}</span><span class="att-body">${esc(attach.slice(open))}</span>`
+    ? `<span class="att-head">${esc(head)}</span><span class="att-body">${esc(attach.slice(open + 1))}</span>`
     : (esc(attach) || '&nbsp;');
 
   const spacer = ATTACH_TOP - (ATTACH_LH - 15.6) / 2 - FRAME.top;

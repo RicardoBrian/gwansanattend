@@ -15,7 +15,7 @@ import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
 } from './dates.js';
 import {
-  KINDS, CAUSES, ITEM_KEYS, DOC_OPTIONS, REASON_PRESETS, CONFIRM_METHODS, TALKER_PRESETS,
+  KINDS, CAUSES, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
 } from './model.js';
 
@@ -528,7 +528,7 @@ function openRecord(existing) {
       </div>
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>`}
     <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}">
-      <div class="presets" id="rReasonP">${REASON_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
+</div>
     <div class="field"><span class="lab">보호자 확인 <span class="hint">— 신고서 아래 확인서에 들어갑니다</span></span>
       <div class="seg" id="rMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
       ${r.method ? `
@@ -536,13 +536,11 @@ function openRecord(existing) {
       <div class="grid3" style="margin-top:8px;">
         <div><input class="inp" type="date" id="rConfDate" value="${esc(r.confirmDate)}" title="확인 날짜"></div>
         <div class="inline"><input class="inp" id="rConfHour" maxlength="10" inputmode="numeric" value="${esc(r.confirmHour)}" title="확인 시각"><span>시</span></div>
-        <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자" value="${esc(r.talker)}"></div>
-      </div>
-      <div class="presets" id="rTalkerP">${TALKER_PRESETS.map(p => `<button data-v="${esc(p)}" class="${r.talker === p ? 'on' : ''}">${esc(p)}</button>`).join('')}</div>` : ''}
+        <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자 (예: 어머님)" value="${esc(r.talker)}"></div>
+      </div>` : ''}
     </div>
-    <div class="field"><span class="lab">서류</span>
-      <div class="presets" id="rDocs" style="margin-top:0;">${[...new Set([...DOC_OPTIONS, ...r.docs])].map(d => `<button data-v="${esc(d)}" class="${r.docs.includes(d) ? 'on' : ''}">${esc(d)}</button>`).join('')}</div>
-      <div class="inline" style="margin-top:8px;"><input class="inp" id="rDocNew" maxlength="30" placeholder="다른 서류 직접 입력"><button class="btn sm" id="rDocAdd">추가</button></div></div>
+    <div class="field"><label>서류 (신고서 첨부에 그대로 들어감)</label>
+      <textarea class="inp" id="rDocs" rows="2" maxlength="400" placeholder="예: 진료확인서 / 담임확인서(상기명 학생은 …)">${esc((r.docs || []).join(', '))}</textarea></div>
     <div class="field">
       <label class="check"><input type="checkbox" id="rDocsIn" ${r.docsIn ? 'checked' : ''}>서류 받음</label>
       <label class="check"><input type="checkbox" id="rNeis" ${r.neis ? 'checked' : ''}>나이스 입력함</label>
@@ -565,6 +563,8 @@ function openRecord(existing) {
     if (r.kind === '결석') { r.end = v('rEnd').value || r.start; r.days = v('rDays').value; }
     else r.period = v('rPeriod').value.trim();
     r.reason = v('rReason').value.trim();
+    const docs = v('rDocs').value.trim();
+    r.docs = docs ? [docs] : [];
     r.docsIn = v('rDocsIn').checked;
     r.neis = v('rNeis').checked;
     r.memo = v('rMemo').value.trim();
@@ -619,26 +619,6 @@ function openRecord(existing) {
       }
       draw();
     });
-    q('#rTalkerP')?.querySelectorAll('button').forEach(b => b.onclick = () => {
-      q('#rTalker').value = b.dataset.v;
-      q('#rTalkerP').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    });
-    q('#rReasonP').querySelectorAll('button').forEach(b => b.onclick = () => {
-      const inp = q('#rReason');
-      inp.value = inp.value ? `${inp.value}, ${b.dataset.v}` : b.dataset.v;
-    });
-    q('#rDocs').querySelectorAll('button').forEach(b => b.onclick = () => {
-      const d = b.dataset.v;
-      r.docs = r.docs.includes(d) ? r.docs.filter(x => x !== d) : [...r.docs, d];
-      b.classList.toggle('on');
-    });
-    q('#rDocAdd').onclick = () => {
-      const d = q('#rDocNew').value.trim();
-      if (!d) return;
-      read(root);
-      if (!r.docs.includes(d)) r.docs.push(d);
-      draw();
-    };
     q('#rCancel').onclick = closeModal;
     q('#rDel')?.addEventListener('click', async () => {
       const linked = existing.reportId && S.reports.some(p => p.id === existing.reportId);
@@ -854,10 +834,11 @@ function drawEditor() {
         <button class="icon-btn" id="eClose" title="닫기"><svg width="16" height="16"><use href="#ic-close"/></svg></button>
       </div>
       ${E.warnings.map(w => `<p class="hint warn">※ ${esc(w)}</p>`).join('')}
-      <div class="field"><label>학생</label><select class="inp" id="eNo">${studentOptions(r.no, r.name)}</select></div>
-      <div class="field"><span class="lab">구분 (위 문장 동그라미)</span><div class="seg" id="eCause">${['출석인정', '질병'].map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div></div>
-
-      <div class="field"><span class="lab">1. 기간 — 체크한 종류에 동그라미가 자동으로 쳐집니다</span>
+      <section class="zone-sec" data-zone="student"><div class="zone-title">신고서 · 인적사항</div>
+        <div class="field"><label>학생</label><select class="inp" id="eNo">${studentOptions(r.no, r.name)}</select></div></section>
+      <section class="zone-sec" data-zone="cause"><div class="zone-title">구분 (위 문장 동그라미)</div>
+        <div class="seg" id="eCause">${['출석인정', '질병'].map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div></section>
+      <section class="zone-sec" data-zone="period"><div class="zone-title">1. 기간 <span class="hint">— 체크한 종류에 동그라미가 쳐집니다</span></div>
         ${oneRow('지각', '지각')}${oneRow('조퇴', '조퇴')}${oneRow('결과', '결과')}
         <div class="period-row absent">
           <label class="check"><input type="checkbox" data-item="absent" ${ab ? 'checked' : ''}>결석</label>
@@ -865,33 +846,32 @@ function drawEditor() {
           <input class="inp" type="date" data-f="absent.end" value="${esc(ab?.end || '')}" ${ab ? '' : 'disabled'}>
           <input class="inp" type="number" min="0" max="400" data-f="absent.days" title="일수" value="${esc(ab?.days ?? '')}" ${ab ? '' : 'disabled'}>
         </div>
-        <p class="hint" id="eAbsNote"></p>
-      </div>
+        <p class="hint" id="eAbsNote" style="margin:0;"></p></section>
+      <section class="zone-sec" data-zone="reason"><div class="zone-title">2. 사유</div>
+        <input class="inp" data-f="reason" maxlength="200" value="${esc(r.reason)}"></section>
+      <section class="zone-sec" data-zone="sign"><div class="zone-title">작성일 · 서명란</div>
+        <div class="grid3">
+          <div><label class="mini">작성일</label><input class="inp" type="date" data-f="written" value="${esc(r.written)}"></div>
+          <div><label class="mini">본인</label><input class="inp" data-f="selfName" maxlength="40" value="${esc(r.selfName)}"></div>
+          <div><label class="mini">보호자</label><input class="inp" data-f="guardianName" maxlength="40" placeholder="비우면 빈칸" value="${esc(r.guardianName)}"></div>
+        </div></section>
 
-      <div class="field"><label>2. 사유</label><input class="inp" data-f="reason" maxlength="200" value="${esc(r.reason)}">
-        <div class="presets" data-preset="reason">${REASON_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
-      <div class="grid3">
-        <div class="field"><label>작성일</label><input class="inp" type="date" data-f="written" value="${esc(r.written)}"></div>
-        <div class="field"><label>본인 이름</label><input class="inp" data-f="selfName" maxlength="40" value="${esc(r.selfName)}"></div>
-        <div class="field"><label>보호자 이름</label><input class="inp" data-f="guardianName" maxlength="40" placeholder="비우면 빈칸" value="${esc(r.guardianName)}"></div>
-      </div>
-
-      <h3 style="margin-top:6px;">확인서</h3>
-      <div class="field"><span class="lab">1. 확인방법</span><div class="seg" id="eMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
-        ${r.method === '기타' ? `<input class="inp" style="margin-top:8px;" data-f="methodEtc" maxlength="60" placeholder="기타 확인방법" value="${esc(r.methodEtc)}">` : ''}</div>
-      <div class="grid3">
-        <div class="field"><label>확인 날짜</label><input class="inp" type="date" data-f="confirmDate" value="${esc(r.confirmDate)}"></div>
-        <div class="field"><label>시</label><input class="inp" data-f="confirmHour" maxlength="10" inputmode="numeric" placeholder="예: 13" value="${esc(r.confirmHour)}"></div>
-        <div class="field"><label>대화자</label><input class="inp" data-f="talker" maxlength="30" value="${esc(r.talker)}"></div>
-      </div>
-      <div class="presets" data-preset="talker" style="margin:-6px 0 14px;">${TALKER_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div>
-      <div class="field"><label>2. 첨부</label><textarea class="inp" data-f="attach" rows="3" maxlength="400">${esc(r.attach)}</textarea>
-        <div class="presets" data-preset="attach">${DOC_OPTIONS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div>
-        <p class="hint" id="eAttachNote"></p></div>
-      <div class="grid2">
-        <div class="field"><label>확인서 날짜</label><input class="inp" type="date" data-f="confirmedOn" value="${esc(r.confirmedOn)}"></div>
-        <div class="field"><label>담임 이름</label><input class="inp" data-f="teacherName" maxlength="20" value="${esc(r.teacherName)}"></div>
-      </div>
+      <section class="zone-sec" data-zone="confirm"><div class="zone-title">확인서 · 1. 확인방법</div>
+        <div class="seg" id="eMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
+        ${r.method === '기타' ? `<input class="inp" style="margin-top:8px;" data-f="methodEtc" maxlength="60" placeholder="기타 확인방법" value="${esc(r.methodEtc)}">` : ''}
+        <div class="grid3" style="margin-top:8px;">
+          <div><label class="mini">확인 날짜</label><input class="inp" type="date" data-f="confirmDate" value="${esc(r.confirmDate)}"></div>
+          <div><label class="mini">시</label><input class="inp" data-f="confirmHour" maxlength="10" inputmode="numeric" placeholder="예: 13" value="${esc(r.confirmHour)}"></div>
+          <div><label class="mini">대화자</label><input class="inp" data-f="talker" maxlength="30" placeholder="예: 어머님" value="${esc(r.talker)}"></div>
+        </div></section>
+      <section class="zone-sec" data-zone="attach"><div class="zone-title">2. 첨부</div>
+        <textarea class="inp" data-f="attach" rows="3" maxlength="400" placeholder="예: 진료확인서 / 담임확인서(상기명 학생은 …)">${esc(r.attach)}</textarea>
+        <p class="hint" id="eAttachNote" style="margin:4px 0 0;"></p></section>
+      <section class="zone-sec" data-zone="teacher"><div class="zone-title">확인 날짜 · 담임</div>
+        <div class="grid2">
+          <div><label class="mini">확인서 날짜</label><input class="inp" type="date" data-f="confirmedOn" value="${esc(r.confirmedOn)}"></div>
+          <div><label class="mini">담임 이름</label><input class="inp" data-f="teacherName" maxlength="20" value="${esc(r.teacherName)}"></div>
+        </div></section>
       <div class="actions">
         ${r.id ? '<button class="btn danger left" id="eDel">삭제</button>' : ''}
         <button class="btn" id="eCancel">닫기</button>
@@ -961,13 +941,13 @@ function bindEditor() {
     updatePreview();
   }));
 
-  ed.querySelectorAll('[data-preset]').forEach(box => box.querySelectorAll('button').forEach(b => b.onclick = () => {
-    const f = box.dataset.preset;
-    const inp = q(`[data-f="${f}"]`);
-    inp.value = f === 'talker' ? b.dataset.v : (inp.value.trim() ? `${inp.value.trim()}, ${b.dataset.v}` : b.dataset.v);
-    r[f] = inp.value;
-    updatePreview();
+  // 지금 쓰는 구역: 왼쪽 묶음과 오른쪽 신고서의 같은 자리를 함께 표시한다.
+  ed.querySelectorAll('.zone-sec').forEach(sec => sec.addEventListener('focusin', () => {
+    if (E.zone === sec.dataset.zone) return;
+    E.zone = sec.dataset.zone;
+    showZone(true);
   }));
+  showZone();
 
   q('#eSave').onclick = () => saveEditor(false);
   q('#ePrint').onclick = () => saveEditor(true);
@@ -996,6 +976,8 @@ function updatePreview() {
   prev.style.width = '794px';
   box.style.height = `${1123 * scale}px`;
 
+  showZone();
+
   const ab = E.r.items.absent;
   const note = $('eAbsNote');
   if (note) {
@@ -1014,6 +996,50 @@ function updatePreview() {
     resizeBound = true;
     window.addEventListener('resize', () => updatePreview());
   }
+}
+
+/**
+ * 신고서 위 구역 [x0, y0, x1, y1] (pt). 첨부와 그 아래는 첨부 줄 수에 따라 내려가므로
+ * 그려진 요소의 위치로 잰다.
+ */
+const ZONES = {
+  student: [352, 180, 532, 223],
+  cause: [80, 228, 506, 268],
+  period: [86, 291, 530, 405],
+  reason: [86, 408, 530, 450],
+  sign: [228, 453, 500, 526],
+  confirm: [86, 609, 531, 690],
+};
+
+function showZone(scroll = false) {
+  const ed = $('editor');
+  ed.querySelectorAll('.zone-sec').forEach(sec => sec.classList.toggle('on', sec.dataset.zone === E?.zone));
+  const inner = ed.querySelector('#ePrev .sheet-in');
+  if (!inner || !E) return;
+  inner.querySelector('.zone-hl')?.remove();
+  if (!E.zone) return;
+  const PX = 96 / 72;
+  let box = ZONES[E.zone] && ZONES[E.zone].map(v => v * PX);
+  if (!box) {
+    // 화면 배율과 상관없이 sheet-in 기준 좌표(px, 배율 1)로 바꾼다
+    const scale = inner.getBoundingClientRect().width / inner.offsetWidth;
+    const base = inner.getBoundingClientRect();
+    const rel = el => { const b = el.getBoundingClientRect(); return [(b.left - base.left) / scale, (b.top - base.top) / scale, (b.right - base.left) / scale, (b.bottom - base.top) / scale]; };
+    if (E.zone === 'attach') {
+      const a = rel(inner.querySelector('.attach'));
+      box = [86 * PX, a[1] - 2, 531 * PX, a[3] + 2];
+    } else if (E.zone === 'teacher') {
+      const b = rel(inner.querySelector('.below'));
+      box = [220 * PX, b[1] + 22 * PX, 510 * PX, b[3] - 4 * PX];
+    }
+  }
+  if (!box) return;
+  const hl = document.createElement('i');
+  hl.className = 'zone-hl';
+  Object.assign(hl.style, { left: `${box[0] - 4}px`, top: `${box[1] - 3}px`, width: `${box[2] - box[0] + 8}px`, height: `${box[3] - box[1] + 6}px` });
+  inner.appendChild(hl);
+  // 구역을 옮겼을 때만 미리보기를 그 자리로 — 글자를 칠 때마다 화면이 흔들리지 않게
+  if (scroll) hl.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 function validateReport(r) {

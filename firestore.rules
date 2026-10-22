@@ -171,6 +171,7 @@ service cloud.firestore {
           && (d.days == null || (d.days is int && d.days >= 0 && d.days <= 400))
           && str(d.reason, 200)
           && d.docs is list && d.docs.size() <= 12
+          && (d.docs.size() == 0 || str(d.docs[0], 400))
           && d.docsIn is bool && d.neis is bool
           && str(d.memo, 500)
           && (d.reportId == null || str(d.reportId, 40))

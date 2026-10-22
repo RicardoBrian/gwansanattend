@@ -19,21 +19,7 @@ export const ITEM_KEYS = { 지각: 'late', 조퇴: 'early', 결과: 'result', �
 
 export const typeLabel = r => `${r.cause} ${r.kind}`;
 
-/** 서류 드롭다운. 앞쪽은 노션 출결 DB 항목, 뒤쪽은 신고서 안내 문구에 있는 것. */
-export const DOC_OPTIONS = [
-  '진료확인서', '처방전', '진료비 계산서', '담임확인서', '사회봉사 이수 확인서', '체험학습 보고서',
-  '약봉투', '공문', '내부결재 서류', '출입국 증빙서류',
-];
-
-/** 사유 빠른 입력. 신고서의 "사유명" 안내 문구를 따른다. */
-export const REASON_PRESETS = [
-  '감기', '두통', '복통', '장염', '발열', '생리통', '치과진료', '병원진료', '건강검진',
-  '감염병(인플루엔자)', '감염병(코로나19)', '비자발급',
-];
-
 export const CONFIRM_METHODS = ['가정방문', '전화연락', '기타'];
-
-export const TALKER_PRESETS = ['어머님', '아버님', '할머님', '할아버님', '보호자', '본인'];
 
 /** 새 출결 기록 기본값 */
 export function emptyRecord(date = todayStr()) {
