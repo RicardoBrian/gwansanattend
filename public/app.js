@@ -12,11 +12,11 @@ import * as store from './store.js';
 import { renderSheet } from './form.js';
 import { decodeCsv, parseRoster, TEMPLATE } from './csv.js';
 import {
-  today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS,
+  today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
 } from './dates.js';
 import {
   KINDS, CAUSES, ITEM_KEYS, DOC_OPTIONS, REASON_PRESETS, CONFIRM_METHODS, TALKER_PRESETS,
-  needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords,
+  needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
 } from './model.js';
 
 const $ = id => document.getElementById(id);
@@ -418,7 +418,13 @@ function renderRecords(body) {
     .sort((a, b) => (b.start.localeCompare(a.start)) || (a.no - b.no));
 
   const noRoster = S.loaded.students && !S.students.length;
+  const groups = monthGroups();
   body.innerHTML = `
+    ${groups.length ? `<div class="card" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+      <span style="flex:1;min-width:200px;"><b>신고서 ${groups.length}장</b>을 출력할 수 있습니다
+        <span class="hint">— ${S.month === 'all' ? '전체 기간' : '이 달'}, 아직 신고서가 없는 질병·출석인정 기록을 학생별로 묶었습니다.</span></span>
+      <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>한 번에 출력</button>
+    </div>` : ''}
     ${noRoster ? `<div class="card"><b>명렬표가 비어 있습니다.</b> <span class="hint">명렬표 탭에서 CSV를 먼저 올려 주세요. 등록된 학생만 기록할 수 있습니다.</span>
       <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm accent" data-go="students">명렬표 올리기</button></div></div>` : ''}
     <div class="toolbar">
@@ -440,6 +446,7 @@ function renderRecords(body) {
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('fTodo').onchange = e => { S.todoOnly = e.target.checked; render(); };
   $('btnNewRec').onclick = () => openRecord(null);
+  $('btnBulk')?.addEventListener('click', () => printGroups(groups));
   body.querySelectorAll('.row[data-id]').forEach(row => {
     const id = row.dataset.id;
     row.onclick = e => {
@@ -461,8 +468,8 @@ function renderRecords(body) {
     row.querySelector('[data-report]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       const rep = S.reports.find(p => p.id === r.reportId);
-      if (rep) openEditor(rep);
-      else makeReport([r]);
+      if (rep) printReports([rep]);
+      else printForRecord(r);
     });
   });
   $('selClear')?.addEventListener('click', () => { S.sel.clear(); render(); });
@@ -474,8 +481,8 @@ function recordRow(r) {
   const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : (r.period ? `${esc(r.period)}교시` : '');
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
-      ? '<button class="chip ok" data-report title="신고서 열기">신고서 ✓</button>'
-      : '<button class="chip todo" data-report title="신고서 만들기">신고서 필요</button>';
+      ? '<button class="chip ok" data-report title="다시 출력 (고치려면 신고서 탭)"><svg width="12" height="12"><use href="#ic-print"/></svg>신고서 ✓</button>'
+      : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서를 만들어 바로 출력"><svg width="12" height="12"><use href="#ic-print"/></svg>신고서 출력</button>';
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
   return `
@@ -522,6 +529,17 @@ function openRecord(existing) {
       <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>`}
     <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}">
       <div class="presets" id="rReasonP">${REASON_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
+    <div class="field"><span class="lab">보호자 확인 <span class="hint">— 신고서 아래 확인서에 들어갑니다</span></span>
+      <div class="seg" id="rMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
+      ${r.method ? `
+      ${r.method === '기타' ? `<input class="inp" style="margin-top:8px;" id="rMethodEtc" maxlength="60" placeholder="확인 방법" value="${esc(r.methodEtc)}">` : ''}
+      <div class="grid3" style="margin-top:8px;">
+        <div><input class="inp" type="date" id="rConfDate" value="${esc(r.confirmDate)}" title="확인 날짜"></div>
+        <div class="inline"><input class="inp" id="rConfHour" maxlength="10" inputmode="numeric" value="${esc(r.confirmHour)}" title="확인 시각"><span>시</span></div>
+        <div><input class="inp" id="rTalker" maxlength="30" placeholder="대화자" value="${esc(r.talker)}"></div>
+      </div>
+      <div class="presets" id="rTalkerP">${TALKER_PRESETS.map(p => `<button data-v="${esc(p)}" class="${r.talker === p ? 'on' : ''}">${esc(p)}</button>`).join('')}</div>` : ''}
+    </div>
     <div class="field"><span class="lab">서류</span>
       <div class="presets" id="rDocs" style="margin-top:0;">${[...new Set([...DOC_OPTIONS, ...r.docs])].map(d => `<button data-v="${esc(d)}" class="${r.docs.includes(d) ? 'on' : ''}">${esc(d)}</button>`).join('')}</div>
       <div class="inline" style="margin-top:8px;"><input class="inp" id="rDocNew" maxlength="30" placeholder="다른 서류 직접 입력"><button class="btn sm" id="rDocAdd">추가</button></div></div>
@@ -534,7 +552,7 @@ function openRecord(existing) {
     <div class="actions">
       ${existing ? '<button class="btn danger left" id="rDel">삭제</button>' : ''}
       <button class="btn" id="rCancel">취소</button>
-      ${needsReport(r.cause) && !existing?.reportId ? '<button class="btn" id="rSaveRep">저장 후 신고서</button>' : ''}
+      ${needsReport(r.cause) && !existing?.reportId ? '<button class="btn" id="rSaveRep"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>저장 후 신고서 출력</button>' : ''}
       <button class="btn accent" id="rSave">저장</button>
     </div>`;
 
@@ -550,6 +568,12 @@ function openRecord(existing) {
     r.docsIn = v('rDocsIn').checked;
     r.neis = v('rNeis').checked;
     r.memo = v('rMemo').value.trim();
+    if (r.method) {
+      r.methodEtc = v('rMethodEtc')?.value.trim() || '';
+      r.confirmDate = v('rConfDate').value;
+      r.confirmHour = v('rConfHour').value.trim();
+      r.talker = v('rTalker').value.trim();
+    }
   };
 
   const draw = () => openModal(html(), bind);
@@ -584,6 +608,21 @@ function openRecord(existing) {
     };
     q('#rEnd')?.addEventListener('input', () => updateDays(root));
     q('#rDays')?.addEventListener('input', () => { daysManual = true; updateDays(root); });
+    // 확인 방법을 누르면 날짜·시각을 "지금"으로 채운다(보통 연락 받고 바로 기록하니까). 다시 누르면 해제.
+    q('#rMethod').querySelectorAll('button').forEach(b => b.onclick = () => {
+      read(root);
+      if (r.method === b.dataset.v) {
+        Object.assign(r, { method: '', methodEtc: '', confirmDate: '', confirmHour: '', talker: '' });
+      } else {
+        if (!r.method) { r.confirmDate = today(); r.confirmHour = nowHour(); }
+        r.method = b.dataset.v;
+      }
+      draw();
+    });
+    q('#rTalkerP')?.querySelectorAll('button').forEach(b => b.onclick = () => {
+      q('#rTalker').value = b.dataset.v;
+      q('#rTalkerP').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    });
     q('#rReasonP').querySelectorAll('button').forEach(b => b.onclick = () => {
       const inp = q('#rReason');
       inp.value = inp.value ? `${inp.value}, ${b.dataset.v}` : b.dataset.v;
@@ -620,7 +659,7 @@ function openRecord(existing) {
         const id = await store.saveRecord(S.cls.id, rec);
         closeModal();
         toast('저장했습니다.');
-        if (thenReport) makeReport([{ ...rec, id }]);
+        if (thenReport) printForRecord({ ...rec, id });
       } catch (e) { fail(e); }
     };
     q('#rSave').onclick = () => save(false);
@@ -656,9 +695,11 @@ function renderReports(body) {
   const todo = todoCount();
 
   body.innerHTML = `
-    ${todo ? `<div class="card"><b>신고서가 필요한 기록이 ${todo}건 있습니다.</b>
-      <span class="hint">출결 기록 탭에서 "신고서 필요"를 누르거나, 같은 학생 기록 여러 건을 골라 한 장으로 만들 수 있습니다.</span>
-      <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm" id="goTodo">기록 보기</button></div></div>` : ''}
+    ${todo ? `<div class="card"><b>신고서가 아직 없는 기록이 ${todo}건 있습니다.</b>
+      <span class="hint">학생별로 이어진 기록끼리 묶어 ${groupForReports(S.records, offDays()).length}장으로 만들어 출력합니다.</span>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px;">
+        <button class="btn sm" id="goTodo">기록 보기</button>
+        <button class="btn sm accent" id="todoBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>모두 만들어 출력</button></div></div>` : ''}
     <div class="toolbar">
       ${monthNav()}
       <span class="grow"></span>
@@ -684,6 +725,7 @@ function renderReports(body) {
 
   bindMonthNav(body);
   $('goTodo')?.addEventListener('click', () => { S.tab = 'records'; S.todoOnly = true; S.month = 'all'; render(); });
+  $('todoBulk')?.addEventListener('click', () => printGroups(groupForReports(S.records, offDays())));
   $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
   $('btnAllPrint').onclick = () => printReports(list);
   $('btnNewRep').onclick = pickStudentForReport;
@@ -715,6 +757,43 @@ function pickStudentForReport() {
       openEditor(r);
     };
   });
+}
+
+/** 지금 보고 있는 달(또는 전체)에 걸친 "아직 신고서 없는" 묶음 */
+function monthGroups() {
+  return groupForReports(S.records, offDays())
+    .filter(g => g.some(r => inMonth(r.start, r.end)))
+    .filter(g => !S.filterNo || g[0].no === +S.filterNo);
+}
+
+/** 기록 하나를 눌렀을 때: 그 기록과 이어진 기록들까지 한 장으로 */
+function printForRecord(rec) {
+  const all = [...S.records.filter(x => x.id !== rec.id), rec];
+  const g = groupForReports(all, offDays()).find(x => x.some(r => r.id === rec.id));
+  if (g) printGroups([g]);
+}
+
+let printing = false;
+/**
+ * 묶음마다 신고서를 만들어 저장하고(기록에 "신고서 ✓"가 붙는다) 한 번에 출력한다.
+ * 고칠 게 있으면 신고서 탭에서 열어 고친 뒤 다시 출력하면 된다.
+ */
+async function printGroups(groups) {
+  if (!groups.length || printing) return;
+  const people = new Set(groups.map(g => g[0].no)).size;
+  if (groups.length > 1 && !confirm(`신고서 ${groups.length}장(학생 ${people}명)을 만들고 출력할까요?`)) return;
+  printing = true;
+  try {
+    const made = [];
+    for (const g of groups) {
+      const { report } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+      report.id = await store.saveReport(S.cls.id, report, []);
+      made.push(report);
+    }
+    toast(`신고서 ${made.length}장을 만들었습니다.`);
+    printReports(made);
+  } catch (e) { fail(e); }
+  finally { printing = false; }
 }
 
 function makeReport(recs) {

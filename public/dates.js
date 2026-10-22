@@ -109,6 +109,18 @@ export function countSchoolDays(start, end, offDays = []) {
   return n;
 }
 
+/** s 다음의 첫 수업일 */
+export function nextSchoolDay(s, offDays = []) {
+  let d = addDays(s, 1);
+  for (let i = 0; i < 60 && offReason(d, offDays); i++) d = addDays(d, 1);
+  return d;
+}
+
+/** 지금 시각(한국 시간)의 시 — 보호자 확인 시각 기본값 */
+export function nowHour() {
+  return String(new Date(Date.now() + 9 * 3600e3).getUTCHours());
+}
+
 /** 학년도: 3월~이듬해 2월. 2027-02-10은 2026학년도. */
 export function schoolYearOf(s) {
   const p = parts(s);

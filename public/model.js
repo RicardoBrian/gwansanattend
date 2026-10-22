@@ -4,7 +4,7 @@
  * 필드 이름과 허용값은 firestore.rules의 검증과 일치해야 한다.
  * 여기서 바꾸면 규칙도 같이 바꾼다.
  */
-import { countSchoolDays, today as todayStr } from './dates.js';
+import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js';
 
 /** 나이스 출결 구분: 4종류 × 4사유 = 16유형 */
 export const KINDS = ['결석', '지각', '조퇴', '결과'];
@@ -43,6 +43,8 @@ export function emptyRecord(date = todayStr()) {
     start: date, end: date, period: '', days: 1,
     reason: '', docs: [], docsIn: false, neis: false,
     memo: '', reportId: null,
+    // 보호자 확인 — 신고서 아래 "확인서"에 그대로 들어간다
+    method: '', methodEtc: '', confirmDate: '', confirmHour: '', talker: '',
   };
 }
 
@@ -94,8 +96,12 @@ export function reportFromRecords(recs, { student, teacherName = '', offDays = [
   r.selfName = r.name;
   r.guardianName = student?.guardian || '';
   r.teacherName = teacherName;
-  r.written = today;
-  r.confirmedOn = today;
+  // 작성일·확인서 날짜: 보통 다녀온 다음 수업일에 낸다. 지난 기록을 몰아서 출력해도
+  // "오늘"이 아니라 그 무렵 날짜가 찍히게 한다(오늘이 더 이르면 오늘).
+  const lastDay = sorted.map(x => x.end || x.start).sort().at(-1);
+  const due = lastDay ? nextSchoolDay(lastDay, offDays) : today;
+  r.written = today < due ? today : due;
+  r.confirmedOn = r.written;
   r.recordIds = sorted.map(x => x.id).filter(Boolean);
 
   const causes = uniq(sorted.map(x => x.cause));
@@ -120,8 +126,47 @@ export function reportFromRecords(recs, { student, teacherName = '', offDays = [
 
   r.reason = uniq(sorted.filter(x => needsReport(x.cause)).map(x => (x.reason || '').trim())).join(', ');
   r.attach = uniq(sorted.flatMap(x => x.docs || [])).join(', ');
-  r.confirmDate = first?.start || '';
+
+  // 보호자 확인: 기록에 적어 둔 첫 확인을 쓴다. 없으면 날짜만 첫 출결일로.
+  const conf = sorted.find(x => x.method);
+  if (conf) {
+    r.method = conf.method;
+    r.methodEtc = conf.methodEtc || '';
+    r.confirmDate = conf.confirmDate || conf.start;
+    r.confirmHour = conf.confirmHour || '';
+    r.talker = conf.talker || '';
+  } else {
+    r.method = '';
+    r.confirmDate = first?.start || '';
+  }
   return { report: r, warnings };
+}
+
+/**
+ * 신고서가 아직 없는 기록들을 "한 장씩" 묶는다.
+ * 같은 학생 · 같은 구분(질병/출석인정) · 날짜가 이어지는(다음 수업일 이내) 기록끼리.
+ * 지각·조퇴·결과는 양식에 칸이 하나씩이라 같은 종류가 또 나오면 새 장으로 넘긴다.
+ * (예: 3/5 조퇴 + 3/6 결과 → 한 장, 3/10~3/11 결석 두 건 → 한 장)
+ * @returns {object[][]} 기록 묶음 목록 (학생 번호, 날짜 순)
+ */
+export function groupForReports(records, offDays = []) {
+  const todo = records
+    .filter(r => needsReport(r.cause) && !r.reportId)
+    .sort((a, b) => a.no - b.no || a.start.localeCompare(b.start) || KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind));
+  const groups = [];
+  let g = null, gEnd = '';
+  for (const r of todo) {
+    const fits = g
+      && g[0].no === r.no
+      && g[0].cause === r.cause
+      && r.start <= nextSchoolDay(gEnd, offDays)
+      && (r.kind === '결석' || !g.some(x => x.kind === r.kind));
+    if (!fits) { g = []; groups.push(g); gEnd = ''; }
+    g.push(r);
+    const end = r.end || r.start;
+    if (end > gEnd) gEnd = end;
+  }
+  return groups;
 }
 
 /** 체크된 칸으로 위 문장 "( 결석 · 지각 · 조퇴 · 결과 )"의 동그라미를 정한다. */

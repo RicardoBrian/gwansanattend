@@ -159,7 +159,9 @@ service cloud.firestore {
       function validRecord() {
         let d = request.resource.data;
         return d.keys().hasOnly(['no', 'name', 'kind', 'cause', 'start', 'end', 'period', 'days',
-                                 'reason', 'docs', 'docsIn', 'neis', 'memo', 'reportId', 'createdAt', 'updatedAt'])
+                                 'reason', 'docs', 'docsIn', 'neis', 'memo', 'reportId',
+                                 'method', 'methodEtc', 'confirmDate', 'confirmHour', 'talker',
+                                 'createdAt', 'updatedAt'])
           && d.no is int && d.no >= 1 && d.no <= 99
           && str(d.name, 40)
           && d.kind in ['결석', '지각', '조퇴', '결과']
@@ -172,6 +174,10 @@ service cloud.firestore {
           && d.docsIn is bool && d.neis is bool
           && str(d.memo, 500)
           && (d.reportId == null || str(d.reportId, 40))
+          // 보호자 확인 — 예전에 저장된 기록에는 없을 수 있다
+          && d.get('method', '') in ['', '가정방문', '전화연락', '기타']
+          && str(d.get('methodEtc', ''), 60) && dateOrEmpty(d.get('confirmDate', ''))
+          && str(d.get('confirmHour', ''), 10) && str(d.get('talker', ''), 30)
           && d.createdAt is timestamp
           && d.updatedAt == request.time;
       }

@@ -102,6 +102,8 @@ await ok('명렬표 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/st
 await ok('문서 ID와 번호가 다르면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/6'), { no: 7, name: 'x', guardian: '', updatedAt: serverTimestamp() })));
 await ok('명렬표에 허용 안 된 필드(주민번호 등) 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/8'), { no: 8, name: 'x', guardian: '', phone: '010', updatedAt: serverTimestamp() })));
 await ok('출결 기록 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/records/r1'), record())));
+await ok('보호자 확인 포함 기록', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/records/r4'), record({ method: '전화연락', methodEtc: '', confirmDate: '2026-06-19', confirmHour: '8', talker: '어머님' }))));
+await ok('없는 확인방법 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/records/r5'), record({ method: '문자' }))));
 await ok('없는 유형 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/records/r2'), record({ cause: '무단' }))));
 await ok('끝 날짜가 시작보다 빠르면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/records/r3'), record({ end: '2026-06-18' }))));
 await ok('신고서 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/reports/p1'), report())));

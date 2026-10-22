@@ -172,6 +172,7 @@ async function runBatches(ops) {
 export const RECORD_FIELDS = [
   'no', 'name', 'kind', 'cause', 'start', 'end', 'period', 'days',
   'reason', 'docs', 'docsIn', 'neis', 'memo', 'reportId',
+  'method', 'methodEtc', 'confirmDate', 'confirmHour', 'talker',
 ];
 
 function recordData(r) {
@@ -182,6 +183,7 @@ function recordData(r) {
   d.period = r.period || '';
   d.reason = r.reason || '';
   d.memo = r.memo || '';
+  for (const k of ['method', 'methodEtc', 'confirmDate', 'confirmHour', 'talker']) d[k] = String(r[k] ?? '');
   d.days = r.kind === '결석' ? (Number.isFinite(+r.days) && r.days !== '' && r.days != null ? Math.round(+r.days) : null) : null;
   d.updatedAt = serverTimestamp();
   return d;
