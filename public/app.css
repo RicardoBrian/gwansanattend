@@ -201,22 +201,37 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 .toast { bottom: auto; top: calc(var(--nav-h) + 12px); transform: translateX(-50%) translateY(-20px); z-index: 10000; }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
-/* ── PC: 출결 기록 | 신고서 나란히 ── */
-@media (min-width: 1200px) {
-  .wrap:has(> .tabs) { max-width: 1680px; }
+/* ── PC: 왼쪽 출결 기록 | 오른쪽 신고서(목록 또는 바로 고치기) ── */
+:root { --pane-w: min(60vw, 1180px); }
+body.split-on .wrap { max-width: none; margin: 0 calc(var(--pane-w) + 8px) 0 0; padding-left: 24px; padding-right: 16px; }
+.side-pane {
+  position: fixed; top: var(--nav-h); right: 0; bottom: 0; width: var(--pane-w); z-index: 60;
+  overflow-y: auto; padding: 16px 18px 40px;
+  background: var(--glass-strong); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border-left: 1px solid var(--border-card); box-shadow: var(--shadow);
 }
-.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(440px, 40%); gap: 22px; align-items: start; }
-.pane-r {
-  position: sticky; top: calc(var(--nav-h) + 12px);
-  max-height: calc(100vh - var(--nav-h) - 24px); overflow-y: auto;
-  background: var(--glass); border: 1px solid var(--border-card); border-radius: var(--radius);
-  padding: 14px; box-shadow: var(--highlight), var(--shadow-sm);
-}
-.pane-head, .pane-prev-head { display: flex; align-items: center; gap: 8px; }
-.pane-head { margin-bottom: 10px; }
+.pane-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .pane-head h2 { margin: 0; font-size: 1.05rem; }
-.pane-head .grow, .pane-prev-head .grow { flex: 1; }
-.pane-prev-head { margin: 16px 0 8px; }
+.pane-head .grow { flex: 1; }
 .list.compact .row { grid-template-columns: 22px 92px 1fr; padding: 8px 10px; }
 .row.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-light); }
-.chip.sel { outline: 2px solid var(--success); }
+/* 오른쪽 칸 안의 편집기: 전체 화면이 아니라 칸 안에서 입력칸 | 미리보기 */
+.editor.inline {
+  position: static; inset: auto; z-index: auto; background: none; overflow: visible;
+  display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 0;
+}
+.editor.inline .form-col { overflow: visible; padding: 0 16px 0 0; border-right: 1px solid var(--hairline); }
+.editor.inline .prev-col { overflow: visible; padding: 0 0 0 16px; position: sticky; top: 0; align-self: start; }
+.editor-head .btn { flex: none; }
+/* 왼쪽 기록 줄은 칸이 좁으니 칩을 아래 줄로 */
+body.split-on .row.rec { grid-template-columns: 92px minmax(0, 1fr); }
+body.split-on .row.rec .flags { grid-column: 2; justify-content: flex-start; }
+/* 노트북(1200~1599px): 오른쪽 칸을 넓히고 입력칸을 좁혀 미리보기가 읽히게 */
+@media (max-width: 1599px) {
+  :root { --pane-w: 64vw; }
+  .editor.inline { grid-template-columns: minmax(270px, 300px) minmax(0, 1fr); }
+}
+/* 칸 안의 편집기는 좁으니 결석 기간은 날짜 두 칸을 넓게, 일수는 아랫줄로 */
+.editor.inline .period-row.absent { grid-template-columns: 64px 1fr 1fr; }
+.editor.inline .period-row.absent [data-f="absent.days"] { grid-column: 2; }
+.editor.inline .period-row .inp { padding: 8px 6px; font-size: 0.85rem; }

@@ -31,7 +31,7 @@ const S = {
   month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
   filterNo: '', todoOnly: false,
   printSel: new Set(),  // 신고서 선택(출력)
-  selReport: null,      // PC 화면 오른쪽에 미리보기로 띄운 신고서
+  focus: null,          // PC: 왼쪽에서 고른 출결 기록 — 오른쪽에서 그 신고서를 고친다
   unsubs: [],
   adminOnly: false,
   requests: [],         // 관리자: 승인 대기 신청
@@ -74,7 +74,7 @@ $('modal').addEventListener('mousedown', e => { if (e.target === $('modal')) clo
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (!$('modal').classList.contains('hidden')) closeModal();
-  else if (!$('editor').classList.contains('hidden')) closeEditor();
+  else if (E && !E.inline) closeEditor();
 });
 
 {
@@ -374,6 +374,10 @@ function render() {
       .filter(([k]) => (k !== 'admin' || S.admin) && !(wide && k === 'reports'))
       .map(([k, label]) => [k, wide && k === 'records' ? '출결 · 신고서' : label]);
     const badgeOn = wide ? 'records' : 'reports';
+    const split = wide && S.tab === 'records';
+    document.body.classList.toggle('split-on', split);
+    $('sidePane').classList.toggle('hidden', !split);
+    if (!split && E?.inline) { E = null; S.focus = null; }
     app.innerHTML = `
       <div class="tabs">${tabs.map(([k, label]) => `
         <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === badgeOn && n ? ` <span class="badge" title="아직 만들지 않은 신고서">${n}</span>` : ''}${k === 'admin' && S.requests.length ? ` <span class="badge" title="승인 대기">${S.requests.length}</span>` : ''}</button>`).join('')}
@@ -464,8 +468,10 @@ function renderRecords(body) {
     const id = row.dataset.id;
     row.onclick = e => {
       if (e.target.closest('button')) return;
-      openRecord(S.records.find(r => r.id === id));
+      const r = S.records.find(x => x.id === id);
+      WIDE.matches ? focusRecord(r) : openRecord(r);
     };
+    row.ondblclick = () => { if (WIDE.matches) openRecord(S.records.find(r => r.id === id)); };
     row.querySelector('[data-neis]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       store.setRecordFlag(S.cls.id, id, { neis: !r.neis }).catch(fail);
@@ -477,7 +483,7 @@ function renderRecords(body) {
     row.querySelector('[data-report]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
       const rep = S.reports.find(p => p.id === r.reportId);
-      if (rep && WIDE.matches) { S.selReport = rep.id; render(); }
+      if (WIDE.matches) focusRecord(r);
       else if (rep) openEditor(rep);
       else editForRecord(r);
     });
@@ -488,12 +494,12 @@ function recordRow(r) {
   const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r);
   const reportChip = !needsReport(r.cause) ? ''
     : r.reportId && S.reports.some(p => p.id === r.reportId)
-      ? `<button class="chip ok${WIDE.matches && S.selReport === r.reportId ? ' sel' : ''}" data-report title="신고서 보기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>`
+      ? `<button class="chip ok" data-report title="신고서 열기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>`
       : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서 작성"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 작성</button>';
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
   return `
-    <div class="row rec" data-id="${esc(r.id)}">
+    <div class="row rec${WIDE.matches && S.focus === r.id ? ' on' : ''}" data-id="${esc(r.id)}" ${WIDE.matches ? 'title="누르면 오른쪽에서 신고서, 두 번 누르면 기록 수정"' : ''}>
       <span class="date">${rangeLabel(r)}</span>
       <div class="main">
         <div class="who">${r.no}번 ${esc(r.name)} <span class="chip c-${esc(r.cause)}">${esc(typeLabel(r))}</span> <span class="hint">${esc(detail)}</span></div>
@@ -719,20 +725,47 @@ function reportsInView() {
 }
 
 function renderRecordsTab(body) {
-  if (!WIDE.matches) return renderRecords(body);
-  body.innerHTML = '<div class="split"><section id="paneL"></section><aside class="pane-r" id="paneR"></aside></div>';
-  renderRecords($('paneL'));
-  renderReportPane($('paneR'));
+  renderRecords(body);
+  if (!WIDE.matches) return;
+  if (E?.inline) return; // 오른쪽에서 신고서를 고치는 중 — 건드리지 않는다
+  const r = S.focus && S.records.find(x => x.id === S.focus);
+  if (r && !needsReport(r.cause)) drawRecordInfo($('sidePane'), r);
+  else renderReportPane($('sidePane'));
 }
 
 /**
- * PC 오른쪽 칸: 이 달 신고서 목록 + 고른 신고서 미리보기.
- * 달·학생 필터는 왼쪽 기록과 같은 것을 쓴다. 고치기는 편집 화면(작성일 확인 등)으로.
+ * PC: 왼쪽에서 기록을 고르면 오른쪽에서 그 신고서를 바로 고친다.
+ * 신고서가 있으면 그것을, 없으면 이어진 기록까지 채운 새 신고서를 연다.
+ */
+function focusRecord(r) {
+  S.focus = r.id;
+  const rep = r.reportId && S.reports.find(p => p.id === r.reportId);
+  if (rep) openEditor(rep, [], { focus: r.id });
+  else if (needsReport(r.cause)) editForRecord(r);
+  else E = null;
+  render();
+}
+
+/** 미인정·기타 기록: 신고서가 없으니 기록 내용만 */
+function drawRecordInfo(el, r) {
+  el.innerHTML = `
+    <div class="pane-head"><h2>${r.no}번 ${esc(r.name)} <span class="chip c-${esc(r.cause)}">${esc(typeLabel(r))}</span></h2>
+      <span class="grow"></span>
+      <button class="icon-btn" id="infoClose" title="닫기"><svg width="16" height="16"><use href="#ic-close"/></svg></button></div>
+    <p>${rangeLabel(r).replace('<br>', '')} ${esc(r.kind === '결석' ? `${r.days ?? '?'}일` : periodLabel(r))}</p>
+    <p class="hint">사유: ${esc(r.reason || '없음')}</p>
+    <p class="hint">${esc(r.cause)} 기록은 결석신고서를 쓰지 않습니다.</p>
+    <button class="btn sm" id="infoEdit">출결 기록 수정</button>`;
+  $('infoClose').onclick = () => { S.focus = null; render(); };
+  $('infoEdit').onclick = () => openRecord(r);
+}
+
+/**
+ * PC 오른쪽 칸(기록을 고르기 전): 이 달 신고서 목록. 누르면 그 자리에서 고친다.
+ * 달·학생 필터는 왼쪽 기록과 같은 것을 쓴다.
  */
 function renderReportPane(el) {
   const list = reportsInView();
-  if (!list.some(p => p.id === S.selReport)) S.selReport = list[0]?.id || null;
-  const sel = list.find(p => p.id === S.selReport);
   el.innerHTML = `
     <div class="pane-head">
       <h2>신고서 <span class="hint">${list.length}장</span></h2>
@@ -742,9 +775,10 @@ function renderReportPane(el) {
            <button class="btn sm accent" id="pSelPrint"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>선택 ${S.printSel.size}장 출력</button>`
         : `<button class="btn sm" id="pAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>모두 출력</button>`}
     </div>
+    <p class="hint" style="margin:-4px 0 10px;">왼쪽에서 출결 기록을 누르면 여기서 그 신고서를 바로 고칩니다.</p>
     <div class="list compact">
       ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
-        <div class="row${p.id === S.selReport ? ' on' : ''}" data-id="${esc(p.id)}">
+        <div class="row" data-id="${esc(p.id)}">
           <span><input type="checkbox" ${S.printSel.has(p.id) ? 'checked' : ''} title="출력할 신고서 선택"></span>
           <span class="date">${reportDateLabel(p)}</span>
           <div class="main">
@@ -753,40 +787,23 @@ function renderReportPane(el) {
           </div>
         </div>`).join('') : '<div class="empty">이 달 신고서가 없습니다.</div>'}
     </div>
-    ${sel ? `
-      <div class="pane-prev-head">
-        <b>${sel.no}번 ${esc(sel.name)}</b><span class="hint">미리보기</span>
-        <span class="grow"></span>
-        <button class="btn sm" id="pEdit">수정</button>
-        <button class="btn sm accent" id="pPrint"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>출력</button>
-      </div>
-      <div class="preview-box" id="pPrevBox"><div class="preview-scale" id="pPrev">${renderSheet(sheetData(sel))}</div></div>` : ''}
     <p class="hint" style="margin-top:12px;">출결 기록 없이 신고서만 만들려면 <button class="linkish" id="btnNewRep">빈 신고서</button></p>`;
 
-  scalePanePreview();
   el.querySelectorAll('.row[data-id]').forEach(row => {
     const p = S.reports.find(x => x.id === row.dataset.id);
-    row.onclick = e => { if (!e.target.closest('input,button')) { S.selReport = p.id; render(); } };
-    row.ondblclick = () => openEditor(p);
+    row.onclick = e => {
+      if (e.target.closest('input,button')) return;
+      S.focus = (p.recordIds || [])[0] || null;
+      openEditor(p, [], { focus: S.focus });
+      render();
+    };
     row.querySelector('input[type=checkbox]').onchange = e => { e.target.checked ? S.printSel.add(p.id) : S.printSel.delete(p.id); render(); };
   });
-  $('pEdit')?.addEventListener('click', () => openEditor(sel));
-  $('pPrint')?.addEventListener('click', () => printReports([sel]));
   $('pAllPrint')?.addEventListener('click', () => printReports(list));
   $('pSelPrint')?.addEventListener('click', () => printReports(list.filter(p => S.printSel.has(p.id))));
   $('pSelClear')?.addEventListener('click', () => { S.printSel.clear(); render(); });
   $('btnNewRep').onclick = pickStudentForReport;
 }
-
-function scalePanePreview() {
-  const box = $('pPrevBox'), prev = $('pPrev');
-  if (!box || !prev) return;
-  const scale = Math.min(1, box.clientWidth / 794);
-  prev.style.width = '794px';
-  prev.style.transform = `scale(${scale})`;
-  box.style.height = `${1123 * scale}px`;
-}
-window.addEventListener('resize', scalePanePreview);
 
 function renderReports(body) {
   const list = reportsInView();
@@ -871,7 +888,9 @@ function editForRecord(rec) {
   const g = groupForReports(all, offDays()).find(x => x.some(r => r.id === rec.id));
   if (!g) return;
   const { report, warnings } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
-  openEditor(report, warnings);
+  if (WIDE.matches && S.tab === 'records') S.focus = rec.id;
+  openEditor(report, warnings, { focus: rec.id });
+  render(); // 왼쪽에서 고른 기록 표시
 }
 
 let making = false;
@@ -899,28 +918,47 @@ async function makeGroups(groups) {
 
 // ── 신고서 편집기 ───────────────────────────────────
 
-let E = null; // { r, prevIds, absManual, warnings }
+/**
+ * E = { r, prevIds, absManual, warnings, root, inline, focus }
+ * root: 편집기를 그리는 곳. PC 기록 화면에서는 오른쪽 칸 안(inline), 그 밖에는 전체 화면(#editor).
+ */
+let E = null;
 
 function closeEditor() {
+  if (E?.inline) {
+    E = null;
+    S.focus = null;
+    render();
+    return;
+  }
   $('editor').classList.add('hidden');
   $('editor').innerHTML = '';
   document.body.style.overflow = '';
   E = null;
 }
 
-function openEditor(rep, warnings = []) {
+function openEditor(rep, warnings = [], { focus = null } = {}) {
   // createdAt(Firestore Timestamp)은 structuredClone하면 일반 객체가 돼 규칙에 걸린다 — 따로 옮긴다.
   const { createdAt, updatedAt: _updatedAt, ...rest } = rep;
   const r = structuredClone({ ...emptyReport(), ...rest, items: { ...emptyReport().items, ...(rest.items || {}) } });
   if (createdAt) r.createdAt = createdAt;
   const a = r.items.absent;
+  const inline = WIDE.matches && S.tab === 'records';
+  if (E && !E.inline) closeEditor();
+  let root;
+  if (inline) {
+    $('sidePane').innerHTML = '<div class="editor inline" id="inlineEditor"></div>';
+    root = $('inlineEditor');
+  } else {
+    root = $('editor');
+    document.body.style.overflow = 'hidden';
+    root.classList.remove('hidden');
+  }
   E = {
-    r, warnings,
+    r, warnings, root, inline, focus,
     prevIds: rep.id ? [...(rep.recordIds || [])] : [],
     absManual: !!(a && a.days !== countSchoolDays(a.start, a.end, offDays())),
   };
-  document.body.style.overflow = 'hidden';
-  $('editor').classList.remove('hidden');
   drawEditor();
 }
 
@@ -936,10 +974,12 @@ function drawEditor() {
     </div>`;
   };
   const ab = it.absent;
-  $('editor').innerHTML = `
+  const focusRec = E.focus && S.records.find(x => x.id === E.focus);
+  E.root.innerHTML = `
     <div class="form-col">
       <div class="editor-head">
-        <h2>${r.id ? '신고서 수정' : '새 신고서'}</h2>
+        <h2>${r.id ? '신고서 수정' : '새 신고서'}${!r.id ? ' <span class="hint">아직 저장 안 됨</span>' : ''}</h2>
+        ${focusRec ? '<button class="btn sm" id="eRec" title="이 신고서의 출결 기록을 고칩니다">출결 기록 수정</button>' : ''}
         <button class="icon-btn" id="eClose" title="닫기"><svg width="16" height="16"><use href="#ic-close"/></svg></button>
       </div>
       ${E.warnings.map(w => `<p class="hint warn">※ ${esc(w)}</p>`).join('')}
@@ -1004,11 +1044,15 @@ function setPath(obj, path, val) {
 }
 
 function bindEditor() {
-  const ed = $('editor');
+  const ed = E.root;
   const r = E.r;
   const q = s => ed.querySelector(s);
 
   q('#eClose').onclick = closeEditor;
+  q('#eRec')?.addEventListener('click', () => {
+    const rec = S.records.find(x => x.id === E.focus);
+    if (rec) openRecord(rec);
+  });
   q('#eCancel').onclick = closeEditor;
   q('#eNo').onchange = e => {
     const s = byNo(+e.target.value);
@@ -1126,7 +1170,8 @@ const ZONES = {
 };
 
 function showZone(scroll = false) {
-  const ed = $('editor');
+  if (!E) return;
+  const ed = E.root;
   ed.querySelectorAll('.zone-sec').forEach(sec => sec.classList.toggle('on', sec.dataset.zone === E?.zone));
   const inner = ed.querySelector('#ePrev .sheet-in');
   if (!inner || !E) return;
@@ -1181,7 +1226,9 @@ async function saveEditor(thenPrint) {
     E.prevIds = [...r.recordIds];
     toast('저장했습니다.');
     if (thenPrint) printReports([r]);
-    closeEditor();
+    // PC 오른쪽 칸은 저장 후에도 그대로 두어 이어서 보거나 출력한다
+    if (E.inline) drawEditor();
+    else closeEditor();
   } catch (e) { fail(e); }
 }
 
