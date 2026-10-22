@@ -1,0 +1,12 @@
+{
+  "name": "gwansanattend-rules-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "cd .. && npx -y firebase-tools@13 emulators:exec --only firestore --project demo-gwansanattend \"node rules-test/firestore.rules.test.mjs\""
+  },
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^4",
+    "firebase": "^11"
+  }
+}

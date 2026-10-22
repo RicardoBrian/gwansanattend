@@ -1,0 +1,25 @@
+/*
+ * 결석신고서 A4 한 장 — form.js가 만드는 마크업 전용.
+ * 화면 테마(theme.css)의 색·글꼴을 절대 물려받지 않게 모든 값을 여기서 고정한다.
+ * 다크 모드에서도 종이는 흰 바탕에 검은 글씨다.
+ *
+ * 글꼴은 출력하는 컴퓨터에 설치된 것을 쓴다. 굴림은 Windows 기본 글꼴,
+ * 함초롬돋움은 한글(HWP)을 설치하면 같이 깔린다. 없으면 나눔고딕으로 대신한다.
+ */
+.sheet {
+  width: 210mm; height: 297mm; background: #fff; color: #000;
+  position: relative; overflow: hidden;
+}
+.sheet-in { position: absolute; inset: 0; width: 595.3pt; height: 841.9pt; }
+.sheet .t { position: absolute; white-space: nowrap; letter-spacing: 0; font-weight: 400; }
+.sheet .g  { font-family: "굴림", Gulim, "Nanum Gothic", "NanumGothic", sans-serif; }
+.sheet .h, .sheet .hb { font-family: "함초롬돋움", "HCR Dotum", "HCRDotum", "Nanum Gothic", "NanumGothic", sans-serif; }
+.sheet .hb { font-weight: 700; }
+.sheet .red { color: #e00000; }
+.sheet .ln { position: absolute; height: 0; border-top: 0.6pt solid #000; }
+.sheet .ln.v { width: 0; border-top: 0; border-left: 0.6pt solid #000; }
+.sheet .ln.dash { border-top: 0.6pt dashed #000; }
+.sheet .circle { position: absolute; border: 0.7pt solid #000; border-radius: 50%; }
+.sheet .frame { position: absolute; border: 0.6pt solid #000; }
+.sheet .attach { font-size: 12pt; white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+.sheet .below { position: relative; }

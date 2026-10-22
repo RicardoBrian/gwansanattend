@@ -1,0 +1,239 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@300;400;500;600;700&display=swap');
+/* ============================================================
+   OHinfo — Liquid Glass Design System
+   Apple iOS 26 / macOS Tahoe 풍의 굴절 유리 + 가독성 사수
+   ============================================================ */
+
+:root {
+  /* ---- Background: subtle color mesh (vibrancy 원천) ---- */
+  --bg:
+    radial-gradient(at 18% 18%, #e7ecff 0%, transparent 52%),
+    radial-gradient(at 82% 12%, #ffe7f2 0%, transparent 46%),
+    radial-gradient(at 65% 88%, #e0f5ff 0%, transparent 52%),
+    radial-gradient(at 8% 92%, #eee6ff 0%, transparent 44%),
+    #f4f5fa;
+  --bg-elevated:   #ffffff;
+
+  /* ---- Glass surfaces (translucent + blur) ---- */
+  --surface:       rgba(255,255,255,0.62);
+  --surface-2:     rgba(255,255,255,0.48);
+  --glass:         rgba(255,255,255,0.50);
+  --glass-strong:  rgba(255,255,255,0.74);
+  --glass-nav:     rgba(255,255,255,0.62);
+  --blur:          saturate(180%) blur(22px);
+
+  /* ---- Text (항상 또렷) ---- */
+  --text:    #1a1c22;
+  --text-2:  #5b606b;
+  --text-3:  #8a8f99;
+  --sub:     #5b606b;
+
+  /* ---- Accent ---- */
+  --accent:        #0071e3;
+  --accent-hover:  #0a84ff;
+  --accent-press:  #006edb;
+  --accent-light:  rgba(0,113,227,0.12);
+  --accent-text:   #ffffff;
+  --accent-grad:   linear-gradient(180deg, #3a9bff 0%, #0071e3 100%);
+  --danger:        #ff3b30;
+  --danger-light:  rgba(255,59,48,0.12);
+  --success:       #34c759;
+  --success-light: rgba(52,199,89,0.16);
+
+  /* ---- Edges & depth (glass) ---- */
+  --border:        rgba(255,255,255,0.55);
+  --border-card:   rgba(255,255,255,0.55);
+  --hairline:      rgba(0,0,0,0.06);
+  --highlight:     inset 0 1px 0 rgba(255,255,255,0.9), inset 0 0 0 0.5px rgba(255,255,255,0.4);
+  --shadow-sm:     0 2px 8px rgba(40,60,130,0.08);
+  --shadow:        0 10px 30px rgba(40,60,130,0.12);
+  --shadow-md:     0 18px 50px rgba(40,60,130,0.16);
+  --shadow-lg:     0 30px 70px rgba(40,60,130,0.22);
+
+  --radius: 20px; --radius-sm: 13px; --radius-lg: 26px; --radius-pill: 980px;
+  --nav-h: 56px;
+  --ease: cubic-bezier(0.4,0.0,0.2,1); --dur: 0.26s;
+  --font: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "SF Pro Display",
+          "Pretendard", system-ui, "Helvetica Neue", Arial, sans-serif;
+}
+
+body.dark {
+  --bg:
+    radial-gradient(at 18% 18%, #1b2444 0%, transparent 55%),
+    radial-gradient(at 82% 12%, #2c1a44 0%, transparent 48%),
+    radial-gradient(at 65% 90%, #0e2438 0%, transparent 52%),
+    radial-gradient(at 8% 92%, #1a1530 0%, transparent 46%),
+    #07080d;
+  --bg-elevated:   #1c1c1e;
+
+  --surface:       rgba(44,46,58,0.58);
+  --surface-2:     rgba(58,60,74,0.46);
+  --glass:         rgba(40,42,54,0.52);
+  --glass-strong:  rgba(54,56,70,0.74);
+  --glass-nav:     rgba(20,21,28,0.62);
+
+  --text:    #f2f4f8;
+  --text-2:  #aab0bd;
+  --text-3:  #7e848f;
+  --sub:     #aab0bd;
+
+  --accent:        #0a84ff;
+  --accent-hover:  #409cff;
+  --accent-light:  rgba(10,132,255,0.18);
+  --accent-grad:   linear-gradient(180deg, #2b95ff 0%, #0a84ff 100%);
+  --danger:        #ff453a;
+  --danger-light:  rgba(255,69,58,0.18);
+  --success:       #30d158;
+  --success-light: rgba(48,209,88,0.2);
+
+  --border:        rgba(255,255,255,0.14);
+  --border-card:   rgba(255,255,255,0.12);
+  --hairline:      rgba(255,255,255,0.08);
+  --highlight:     inset 0 1px 0 rgba(255,255,255,0.16), inset 0 0 0 0.5px rgba(255,255,255,0.06);
+  --shadow-sm:     0 2px 8px rgba(0,0,0,0.4);
+  --shadow:        0 10px 30px rgba(0,0,0,0.5);
+  --shadow-md:     0 18px 50px rgba(0,0,0,0.6);
+  --shadow-lg:     0 30px 70px rgba(0,0,0,0.7);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 17px; line-height: 1.5; letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility; min-height: 100vh;
+}
+
+/* ---- Glass surfaces get refraction ---- */
+.card, .login-card, .app-modal-card, .modal-box {
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--highlight), var(--shadow);
+  border: 1px solid var(--border-card);
+}
+
+/* ---- Buttons ---- */
+.btn {
+  font-family: inherit; font-size: 0.95rem; font-weight: 600;
+  cursor: pointer; border-radius: var(--radius-pill);
+  padding: 10px 20px; border: 1px solid var(--border-card);
+  background: var(--glass); color: var(--text);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--highlight), var(--shadow-sm);
+  transition: background var(--dur) var(--ease), transform 0.08s var(--ease), box-shadow var(--dur) var(--ease);
+  white-space: nowrap; line-height: 1.2;
+}
+.btn:hover { background: var(--glass-strong); }
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: 3px solid var(--accent-light); outline-offset: 2px; }
+.btn.accent {
+  background: #1d1d1f; color: #fff; border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--shadow-md);
+}
+body.dark .btn.accent { background: #f5f5f7; color: #1d1d1f; }
+.btn.accent:hover { opacity: 0.88; }
+.btn.ghost { background: transparent; box-shadow: none; backdrop-filter: none; }
+.btn.ghost:hover { background: var(--accent-light); color: var(--accent); }
+.btn.danger { color: var(--danger); background: var(--danger-light); border-color: transparent; box-shadow: none; backdrop-filter: none; }
+.btn.sm { padding: 6px 14px; font-size: 0.85rem; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---- Inputs (frosted) ---- */
+.inp {
+  width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-card); background: var(--glass-strong);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  color: var(--text); font-family: inherit; font-size: 1rem; outline: none;
+  box-shadow: var(--highlight);
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+.inp::placeholder { color: var(--text-3); }
+.inp:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-light); }
+select.inp {
+  cursor: pointer; appearance: none; padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238a8f99' d='M6 8L1.5 3.5l1-1L6 6l3.5-3.5 1 1z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+
+/* ---- Frosted nav ---- */
+.nav {
+  position: sticky; top: 0; z-index: 200; height: var(--nav-h);
+  display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  background: var(--glass-nav);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border-bottom: 1px solid var(--hairline);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.4);
+}
+
+/* ---- Dark toggle ---- */
+.dark-toggle {
+  width: 44px; height: 26px; border-radius: var(--radius-pill);
+  background: var(--glass-strong); border: 1px solid var(--border-card); cursor: pointer;
+  position: relative; transition: background var(--dur) var(--ease); flex-shrink: 0;
+  box-shadow: var(--highlight);
+}
+body.dark .dark-toggle { background: var(--accent); border-color: transparent; }
+.dark-toggle::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform var(--dur) var(--ease);
+}
+body.dark .dark-toggle::after { transform: translateX(18px); }
+
+/* ---- Toast ---- */
+.toast {
+  position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%) translateY(80px);
+  background: rgba(28,28,30,0.78); color: #fff; font-size: 0.9rem; font-weight: 600;
+  padding: 12px 22px; border-radius: var(--radius-pill); z-index: 9999;
+  box-shadow: var(--shadow-md); backdrop-filter: saturate(180%) blur(16px);
+  transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease);
+  opacity: 0; pointer-events: none;
+}
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+.hidden { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ============================================================
+   공통 상단 바 브랜드 — 로고 + 지금 페이지 이름(허브 화면은 로고만)
+   모든 사이트·페이지가 같은 모양을 쓰도록 여기서 정의한다.
+   페이지 안에 .nav-brand 스타일을 따로 만들지 않는다.
+   ============================================================ */
+.nav-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 1; text-decoration: none; color: var(--text); cursor: pointer; }
+.nav-brand img { height: 30px; width: auto; display: block; flex-shrink: 0; }
+.nav-brand-title { font-weight: 800; font-size: 1rem; letter-spacing: -0.02em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 로고가 진한 자주색이라 다크 모드의 어두운 상단 바에서 묻힌다 — 밝게 띄운다 */
+body.dark .nav-brand img, body.dark .toolbar-brand img { filter: brightness(1.7) saturate(1.1); }
+
+/* ============================================================
+   공통 로그인/입장 화면 머리말 — 로고 + kakainfo + 부제
+   학생 로그인·관리자 로그인·단축 URL·정산 입장 화면이 모두 이걸 쓴다.
+   ============================================================ */
+.auth-head { text-align: center; margin-bottom: 26px; }
+.auth-head .auth-logo { display: block; height: 64px; width: auto; margin: 0 auto 14px; }
+.auth-head .auth-word { font-size: 1.7rem; font-weight: 900; letter-spacing: -0.04em; color: var(--text); line-height: 1.1; }
+.auth-head .auth-sub { font-size: 0.9rem; font-weight: 600; color: var(--sub); margin-top: 6px; }
+body.dark .auth-head .auth-logo { filter: brightness(1.7) saturate(1.1); }
+.auth-card {
+  width: 100%; max-width: 440px; margin: 24px auto;
+  background: var(--glass-strong); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 1px solid var(--border); border-radius: 30px; padding: 44px 40px;
+  box-shadow: var(--highlight), var(--shadow-md);
+}
+@media (max-width: 480px) { .auth-card { padding: 30px 22px; border-radius: 22px; margin: 16px auto; } }
+/* 로그인·입장의 주 버튼 — 모든 화면 같은 검정 버튼(다크 모드는 흰 버튼) */
+.auth-btn {
+  display: block; width: 100%; padding: 14px; margin-top: 8px; border: none; border-radius: var(--radius-pill);
+  background: #1d1d1f; color: #fff; font-family: inherit; font-size: 1rem; font-weight: 700; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), var(--shadow); transition: opacity 0.2s, transform 0.15s;
+}
+.auth-btn:hover { opacity: 0.88; }
+.auth-btn:active { transform: scale(0.98); }
+.auth-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+body.dark .auth-btn { background: #f5f5f7; color: #1d1d1f; }

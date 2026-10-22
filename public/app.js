@@ -1,0 +1,1130 @@
+/**
+ * 출결 관리 — 화면.
+ *
+ * 흐름: 구글 로그인 → 허용된 계정인지 확인 → 내 반이 없으면 반 등록
+ *       → 탭(출결 기록 · 신고서 · 명렬표 · 설정 · 관리)
+ *
+ * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
+ * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
+ */
+import { CONFIGURED } from './firebase-config.js';
+import * as store from './store.js';
+import { renderSheet } from './form.js';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js';
+import {
+  today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS,
+} from './dates.js';
+import {
+  KINDS, CAUSES, ITEM_KEYS, DOC_OPTIONS, REASON_PRESETS, CONFIRM_METHODS, TALKER_PRESETS,
+  needsReport, typeLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords,
+} from './model.js';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const app = $('app');
+
+const S = {
+  user: null, admin: false,
+  classes: [], cls: null,
+  students: [], records: [], reports: [],
+  tab: 'records',
+  month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
+  filterNo: '', todoOnly: false,
+  sel: new Set(),       // 출결 기록 선택(신고서 만들기)
+  printSel: new Set(),  // 신고서 선택(출력)
+  unsubs: [],
+  adminOnly: false,
+  loaded: { students: false, records: false, reports: false },
+};
+
+const CLASS_KEY = 'gwansanattend.classId';
+
+// ── 공통 UI ─────────────────────────────────────────
+
+let toastTimer;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+function fail(e) {
+  console.error(e);
+  const msg = e?.code === 'permission-denied'
+    ? '권한이 없습니다. 허용된 계정인지, 내 반이 맞는지 확인하세요.'
+    : (e?.message || String(e));
+  toast(msg);
+}
+
+function openModal(html, bind) {
+  $('modalCard').innerHTML = html;
+  $('modal').classList.remove('hidden');
+  bind?.($('modalCard'));
+}
+function closeModal() {
+  $('modal').classList.add('hidden');
+  $('modalCard').innerHTML = '';
+}
+$('modal').addEventListener('mousedown', e => { if (e.target === $('modal')) closeModal(); });
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!$('modal').classList.contains('hidden')) closeModal();
+  else if (!$('editor').classList.contains('hidden')) closeEditor();
+});
+
+{
+  const setDark = on => { document.body.classList.toggle('dark', on); try { localStorage.setItem('gwansanattend.dark', on ? '1' : '0'); } catch {} };
+  let saved = null;
+  try { saved = localStorage.getItem('gwansanattend.dark'); } catch {}
+  setDark(saved === '1');
+  $('darkToggle').onclick = () => setDark(!document.body.classList.contains('dark'));
+}
+
+const studentLabel = s => `${s.no}번 ${s.name}`;
+const byNo = no => S.students.find(s => s.no === no);
+const offDays = () => S.cls?.offDays || [];
+
+function rangeLabel(r) {
+  if (r.kind === '결석' && r.end && r.end !== r.start) return `${shortLabel(r.start)}~<br>${shortLabel(r.end)}`;
+  return shortLabel(r.start);
+}
+
+// ── 시작 ───────────────────────────────────────────
+
+if (!CONFIGURED) {
+  app.innerHTML = `<div class="auth-card"><div class="auth-head"><div class="auth-word">설정이 필요합니다</div>
+    <div class="auth-sub">public/firebase-config.js 에 Firebase 설정값을 넣어 주세요.<br>README의 "처음 설정" 순서를 따라 하면 됩니다.</div></div></div>`;
+} else {
+  store.watchAuth(onAuth);
+}
+
+$('btnLogout').onclick = async () => {
+  await store.signOut();
+  location.reload();
+};
+
+async function onAuth(user) {
+  stopWatching();
+  S.user = user;
+  $('btnLogout').classList.toggle('hidden', !user);
+  $('navEmail').textContent = user?.email || '';
+  $('classPill').classList.add('hidden');
+  if (!user) return renderLogin();
+
+  app.innerHTML = '<div class="center-msg">권한 확인 중…</div>';
+  try {
+    const acc = await store.checkAccess(user);
+    S.admin = acc.admin;
+    if (!acc.allowed) return renderDenied();
+    S.classes = await store.myClasses();
+  } catch (e) {
+    fail(e);
+    app.innerHTML = `<div class="center-msg">불러오지 못했습니다. 새로고침해 주세요.<br><small>${esc(e.message)}</small></div>`;
+    return;
+  }
+  if (!S.classes.length) return renderSetup();
+  let want = null;
+  try { want = localStorage.getItem(CLASS_KEY); } catch {}
+  enterClass(S.classes.find(c => c.id === want) || S.classes[0]);
+}
+
+function renderLogin() {
+  app.innerHTML = `
+    <div class="auth-card">
+      <div class="auth-head">
+        <img class="auth-logo" src="logo.png" alt="">
+        <div class="auth-word">출결 관리</div>
+        <div class="auth-sub">출결 기록 · 결석신고서 출력</div>
+      </div>
+      <button class="auth-btn" id="btnLogin">Google 계정으로 로그인</button>
+      <p class="hint" style="margin-top:16px;text-align:center;">관리자가 등록한 선생님 계정만 사용할 수 있습니다.<br>
+      카카오톡·네이버 앱 안에서 열었다면 Chrome·Safari로 다시 열어 주세요.</p>
+    </div>`;
+  $('btnLogin').onclick = () => store.signIn().catch(fail);
+}
+
+function renderDenied() {
+  app.innerHTML = `
+    <div class="auth-card">
+      <div class="auth-head"><div class="auth-word">승인되지 않은 계정</div>
+        <div class="auth-sub">${esc(S.user.email)}</div></div>
+      <p class="hint" style="text-align:center;">관리자에게 위 이메일을 등록해 달라고 요청한 뒤 다시 로그인해 주세요.<br>
+      학생 정보 보호를 위해 등록된 계정만 사용할 수 있습니다.</p>
+      <button class="auth-btn" id="btnOut">다른 계정으로 로그인</button>
+    </div>`;
+  $('btnOut').onclick = async () => { await store.signOut(); };
+}
+
+// ── 반 등록 ─────────────────────────────────────────
+
+function setupForm() {
+  const y = schoolYearOf(today());
+  const opt = (n, sel) => `<option value="${n}" ${n === sel ? 'selected' : ''}>${n}</option>`;
+  return `
+    <div class="grid3">
+      <div class="field"><label>학년도</label><select class="inp" id="suYear">${[y - 1, y, y + 1].map(v => opt(v, y)).join('')}</select></div>
+      <div class="field"><label>학년</label><select class="inp" id="suGrade">${[1, 2, 3].map(v => opt(v, 1)).join('')}</select></div>
+      <div class="field"><label>반</label><select class="inp" id="suCls">${Array.from({ length: 15 }, (_, i) => opt(i + 1, 1)).join('')}</select></div>
+    </div>
+    <div class="field"><label>담임 이름 (확인서에 인쇄)</label><input class="inp" id="suName" maxlength="20" placeholder="예: 홍길동"></div>
+    <p class="hint">한 반은 선생님 한 분만 등록할 수 있습니다. 등록한 선생님만 그 반 학생과 출결 기록을 볼 수 있습니다.</p>`;
+}
+
+async function submitSetup(root) {
+  const v = id => root.querySelector('#' + id).value;
+  const btn = root.querySelector('#suGo');
+  btn.disabled = true;
+  try {
+    const c = await store.claimClass({ year: +v('suYear'), grade: +v('suGrade'), cls: +v('suCls'), teacherName: v('suName').trim() });
+    S.classes = await store.myClasses();
+    closeModal();
+    enterClass(S.classes.find(x => x.id === c.id) || c, 'students');
+    toast('반을 등록했습니다. 명렬표를 올려 주세요.');
+  } catch (e) {
+    fail(e);
+    btn.disabled = false;
+  }
+}
+
+function renderSetup() {
+  app.innerHTML = `
+    <div class="auth-card" style="max-width:520px;">
+      <div class="auth-head"><div class="auth-word">담임 반 등록</div><div class="auth-sub">처음 한 번만 하면 됩니다</div></div>
+      ${setupForm()}
+      <button class="auth-btn" id="suGo">반 등록</button>
+      ${S.admin ? '<button class="btn ghost" id="suAdmin" style="display:block;margin:12px auto 0;">반 없이 관리 화면만 보기</button>' : ''}
+    </div>`;
+  $('suGo').onclick = () => submitSetup(app);
+  $('suAdmin')?.addEventListener('click', () => { S.adminOnly = true; render(); });
+}
+
+$('classPill').onclick = () => {
+  openModal(`
+    <h2>반 선택</h2>
+    <div class="list">${S.classes.map(c => `
+      <div class="row" data-cid="${esc(c.id)}" style="grid-template-columns:1fr auto;">
+        <div class="main"><div class="who">${c.year}학년도 ${c.grade}학년 ${c.cls}반</div><div class="sub">${esc(c.teacherName)}</div></div>
+        <div class="flags">${c.id === S.cls?.id ? '<span class="chip ok">보는 중</span>' : ''}</div>
+      </div>`).join('')}</div>
+    <h3>새 반 등록 (새 학년도 등)</h3>
+    ${setupForm()}
+    <div class="actions"><button class="btn" id="mClose">닫기</button><button class="btn accent" id="suGo">반 등록</button></div>`,
+  root => {
+    root.querySelectorAll('[data-cid]').forEach(el => el.onclick = () => {
+      closeModal();
+      enterClass(S.classes.find(c => c.id === el.dataset.cid));
+    });
+    root.querySelector('#mClose').onclick = closeModal;
+    root.querySelector('#suGo').onclick = () => submitSetup(root);
+  });
+};
+
+// ── 반 들어가기 · 구독 ───────────────────────────────
+
+function stopWatching() {
+  S.unsubs.forEach(u => u());
+  S.unsubs = [];
+}
+
+function enterClass(c, tab) {
+  stopWatching();
+  S.cls = c;
+  S.students = []; S.records = []; S.reports = [];
+  S.loaded = { students: false, records: false, reports: false };
+  S.sel.clear(); S.printSel.clear();
+  if (tab) S.tab = tab;
+  try { localStorage.setItem(CLASS_KEY, c.id); } catch {}
+  $('classPill').textContent = `${c.grade}학년 ${c.cls}반`;
+  $('classPill').classList.remove('hidden');
+
+  const onErr = e => { fail(e); };
+  S.unsubs.push(
+    store.watchClass(c.id, data => {
+      if (!data) { // 관리자가 등록 해제했거나 학년 말 삭제
+        toast('이 반 등록이 해제되었습니다.');
+        setTimeout(() => location.reload(), 1200);
+        return;
+      }
+      S.cls = data;
+      render();
+    }, onErr),
+    store.watchSub(c.id, 'students', list => { S.students = list.sort((a, b) => a.no - b.no); S.loaded.students = true; render(); }, onErr),
+    store.watchSub(c.id, 'records', list => { S.records = list; S.loaded.records = true; render(); }, onErr),
+    store.watchSub(c.id, 'reports', list => { S.reports = list; S.loaded.reports = true; render(); }, onErr),
+  );
+  render();
+}
+
+// ── 메인 화면 ───────────────────────────────────────
+
+const TABS = [
+  ['records', '출결 기록'],
+  ['reports', '신고서'],
+  ['students', '명렬표'],
+  ['settings', '설정'],
+  ['admin', '관리'],
+];
+
+function todoCount() {
+  return S.records.filter(r => needsReport(r.cause) && !r.reportId).length;
+}
+
+let renderQueued = false;
+function render() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    if (!S.cls) {
+      // 담임 반이 없는 관리자: 관리 탭만
+      if (S.adminOnly) { app.innerHTML = '<div id="tabBody"></div>'; S.tab = 'admin'; renderAdmin($('tabBody')); }
+      return;
+    }
+    const y = window.scrollY;
+    const n = todoCount();
+    app.innerHTML = `
+      <div class="tabs">${TABS.filter(([k]) => k !== 'admin' || S.admin).map(([k, label]) => `
+        <button class="tab ${S.tab === k ? 'on' : ''}" data-tab="${k}">${label}${k === 'reports' && n ? ` <span class="badge" title="신고서가 필요한 기록">${n}</span>` : ''}</button>`).join('')}
+      </div>
+      <div id="tabBody"></div>`;
+    app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); });
+    const body = $('tabBody');
+    ({ records: renderRecords, reports: renderReports, students: renderStudents, settings: renderSettings, admin: renderAdmin })[S.tab](body);
+    window.scrollTo(0, y);
+  });
+}
+
+function monthNav() {
+  const label = S.month === 'all' ? '전체 기간' : `${+S.month.slice(0, 4)}년 ${+S.month.slice(5)}월`;
+  return `<div class="monthnav">
+    <button class="icon-btn" data-mon="-1" title="이전 달"><svg width="16" height="16"><use href="#ic-left"/></svg></button>
+    <span class="label">${label}</span>
+    <button class="icon-btn" data-mon="1" title="다음 달"><svg width="16" height="16"><use href="#ic-right"/></svg></button>
+    <button class="btn sm ghost" data-mon="all">${S.month === 'all' ? '이번 달' : '전체'}</button>
+  </div>`;
+}
+
+function bindMonthNav(root) {
+  root.querySelectorAll('[data-mon]').forEach(b => b.onclick = () => {
+    const v = b.dataset.mon;
+    if (v === 'all') S.month = S.month === 'all' ? today().slice(0, 7) : 'all';
+    else {
+      const base = S.month === 'all' ? today().slice(0, 7) : S.month;
+      let [y, m] = base.split('-').map(Number);
+      m += +v;
+      if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
+      S.month = `${y}-${String(m).padStart(2, '0')}`;
+    }
+    S.sel.clear(); S.printSel.clear();
+    render();
+  });
+}
+
+/** 기간이 이 달과 겹치면 보인다 (3/30~4/2 결석은 3월·4월 둘 다). */
+function inMonth(start, end) {
+  if (S.month === 'all') return true;
+  const first = `${S.month}-01`, last = `${S.month}-31`;
+  return start <= last && (end || start) >= first;
+}
+
+function studentOptions(selected, includeName) {
+  const opts = S.students.map(s => `<option value="${s.no}" ${s.no === selected ? 'selected' : ''}>${esc(studentLabel(s))}</option>`);
+  if (selected && !byNo(selected)) opts.unshift(`<option value="${selected}" selected>${selected}번 ${esc(includeName || '')} (명렬표에 없음)</option>`);
+  return `<option value="">학생 선택</option>${opts.join('')}`;
+}
+
+// ── 출결 기록 탭 ─────────────────────────────────────
+
+function renderRecords(body) {
+  const list = S.records
+    .filter(r => inMonth(r.start, r.end))
+    .filter(r => !S.filterNo || r.no === +S.filterNo)
+    .filter(r => !S.todoOnly || (needsReport(r.cause) && !r.reportId) || !r.neis || (r.docs?.length && !r.docsIn))
+    .sort((a, b) => (b.start.localeCompare(a.start)) || (a.no - b.no));
+
+  const noRoster = S.loaded.students && !S.students.length;
+  body.innerHTML = `
+    ${noRoster ? `<div class="card"><b>명렬표가 비어 있습니다.</b> <span class="hint">명렬표 탭에서 CSV를 먼저 올려 주세요. 등록된 학생만 기록할 수 있습니다.</span>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm accent" data-go="students">명렬표 올리기</button></div></div>` : ''}
+    <div class="toolbar">
+      ${monthNav()}
+      <span class="grow"></span>
+      <select class="inp" id="fNo">${`<option value="">전체 학생</option>` + S.students.map(s => `<option value="${s.no}" ${String(s.no) === String(S.filterNo) ? 'selected' : ''}>${esc(studentLabel(s))}</option>`).join('')}</select>
+      <label class="check" style="margin:0;"><input type="checkbox" id="fTodo" ${S.todoOnly ? 'checked' : ''}>할 일만</label>
+      <button class="btn sm accent" id="btnNewRec" ${noRoster ? 'disabled' : ''}><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>기록 추가</button>
+    </div>
+    <div class="list">
+      ${!S.loaded.records ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(recordRow).join('') : '<div class="empty">기록이 없습니다.</div>'}
+    </div>
+    ${S.sel.size ? `<div class="selbar"><span>${S.sel.size}건 선택</span>
+      <span><button class="btn sm ghost" id="selClear">선택 해제</button>
+      <button class="btn sm accent" id="selReport">신고서 만들기</button></span></div>` : ''}`;
+
+  body.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { S.tab = b.dataset.go; render(); });
+  bindMonthNav(body);
+  $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
+  $('fTodo').onchange = e => { S.todoOnly = e.target.checked; render(); };
+  $('btnNewRec').onclick = () => openRecord(null);
+  body.querySelectorAll('.row[data-id]').forEach(row => {
+    const id = row.dataset.id;
+    row.onclick = e => {
+      if (e.target.closest('input,button')) return;
+      openRecord(S.records.find(r => r.id === id));
+    };
+    row.querySelector('input[type=checkbox]')?.addEventListener('change', e => {
+      e.target.checked ? S.sel.add(id) : S.sel.delete(id);
+      render();
+    });
+    row.querySelector('[data-neis]')?.addEventListener('click', () => {
+      const r = S.records.find(x => x.id === id);
+      store.setRecordFlag(S.cls.id, id, { neis: !r.neis }).catch(fail);
+    });
+    row.querySelector('[data-docs]')?.addEventListener('click', () => {
+      const r = S.records.find(x => x.id === id);
+      store.setRecordFlag(S.cls.id, id, { docsIn: !r.docsIn }).catch(fail);
+    });
+    row.querySelector('[data-report]')?.addEventListener('click', () => {
+      const r = S.records.find(x => x.id === id);
+      const rep = S.reports.find(p => p.id === r.reportId);
+      if (rep) openEditor(rep);
+      else makeReport([r]);
+    });
+  });
+  $('selClear')?.addEventListener('click', () => { S.sel.clear(); render(); });
+  $('selReport')?.addEventListener('click', () => makeReport(S.records.filter(r => S.sel.has(r.id))));
+}
+
+function recordRow(r) {
+  const canSel = needsReport(r.cause) && !r.reportId;
+  const detail = r.kind === '결석' ? `${r.days ?? '?'}일` : (r.period ? `${r.period}교시` : '');
+  const reportChip = !needsReport(r.cause) ? ''
+    : r.reportId && S.reports.some(p => p.id === r.reportId)
+      ? '<button class="chip ok" data-report title="신고서 열기">신고서 ✓</button>'
+      : '<button class="chip todo" data-report title="신고서 만들기">신고서 필요</button>';
+  const docsChip = r.docs?.length
+    ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
+  return `
+    <div class="row" data-id="${esc(r.id)}">
+      <span>${canSel ? `<input type="checkbox" ${S.sel.has(r.id) ? 'checked' : ''} title="신고서로 묶을 기록 선택">` : ''}</span>
+      <span class="date">${rangeLabel(r)}</span>
+      <div class="main">
+        <div class="who">${r.no}번 ${esc(r.name)} <span class="chip c-${esc(r.cause)}">${esc(typeLabel(r))}</span> <span class="hint">${esc(detail)}</span></div>
+        <div class="sub">${esc(r.reason || '사유 없음')}${r.docs?.length ? ' · ' + esc(r.docs.join(', ')) : ''}${r.memo ? ' · ' + esc(r.memo) : ''}</div>
+      </div>
+      <div class="flags">${docsChip}${reportChip}
+        <button class="chip ${r.neis ? 'ok' : ''}" data-neis title="눌러서 나이스 입력 여부 바꾸기">${r.neis ? '나이스 ✓' : '나이스 미입력'}</button>
+      </div>
+    </div>`;
+}
+
+// ── 출결 기록 편집 ───────────────────────────────────
+
+function openRecord(existing) {
+  const r = existing ? { ...existing, docs: [...(existing.docs || [])] } : emptyRecord();
+  if (!existing && S.filterNo) {
+    const s = byNo(+S.filterNo);
+    if (s) { r.no = s.no; r.name = s.name; }
+  }
+  let daysManual = !!existing && existing.kind === '결석' && existing.days !== countSchoolDays(existing.start, existing.end, offDays());
+
+  const html = () => `
+    <h2>${existing ? '출결 기록 수정' : '출결 기록 추가'}</h2>
+    <div class="field"><label>학생</label><select class="inp" id="rNo">${studentOptions(r.no, r.name)}</select></div>
+    <div class="field"><span class="lab">종류</span><div class="seg" id="rKind">${KINDS.map(k => `<button data-v="${k}" class="${r.kind === k ? 'on' : ''}">${k}</button>`).join('')}</div></div>
+    <div class="field"><span class="lab">사유 구분</span><div class="seg" id="rCause">${CAUSES.map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div>
+      <p class="hint" style="margin:6px 0 0;">${needsReport(r.cause) ? '질병·출석인정은 결석신고서를 만들 수 있습니다.' : '미인정·기타는 기록만 남깁니다(신고서 없음).'}</p></div>
+    ${r.kind === '결석' ? `
+      <div class="grid3">
+        <div class="field"><label>시작일</label><input class="inp" type="date" id="rStart" value="${esc(r.start)}"></div>
+        <div class="field"><label>종료일</label><input class="inp" type="date" id="rEnd" value="${esc(r.end || r.start)}"></div>
+        <div class="field"><label>일수</label><input class="inp" type="number" min="0" max="400" id="rDays" value="${esc(r.days ?? '')}"></div>
+      </div>
+      <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>` : `
+      <div class="grid2">
+        <div class="field"><label>날짜</label><input class="inp" type="date" id="rStart" value="${esc(r.start)}"></div>
+        <div class="field"><label>교시</label><input class="inp" id="rPeriod" maxlength="10" placeholder="예: 5" value="${esc(r.period)}"></div>
+      </div>
+      <p class="hint" id="rDaysNote" style="margin-top:-6px;"></p>`}
+    <div class="field"><label>사유</label><input class="inp" id="rReason" maxlength="200" placeholder="예: 감기, 치과진료" value="${esc(r.reason)}">
+      <div class="presets" id="rReasonP">${REASON_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
+    <div class="field"><span class="lab">서류</span>
+      <div class="presets" id="rDocs" style="margin-top:0;">${[...new Set([...DOC_OPTIONS, ...r.docs])].map(d => `<button data-v="${esc(d)}" class="${r.docs.includes(d) ? 'on' : ''}">${esc(d)}</button>`).join('')}</div>
+      <div class="inline" style="margin-top:8px;"><input class="inp" id="rDocNew" maxlength="30" placeholder="다른 서류 직접 입력"><button class="btn sm" id="rDocAdd">추가</button></div></div>
+    <div class="field">
+      <label class="check"><input type="checkbox" id="rDocsIn" ${r.docsIn ? 'checked' : ''}>서류 받음</label>
+      <label class="check"><input type="checkbox" id="rNeis" ${r.neis ? 'checked' : ''}>나이스 입력함</label>
+    </div>
+    <div class="field"><label>메모 (신고서에는 안 나옴)</label><input class="inp" id="rMemo" maxlength="500" value="${esc(r.memo)}"></div>
+    ${existing?.reportId ? '<p class="hint">이 기록으로 만든 신고서가 있습니다. 기록을 고쳐도 신고서는 따로 고쳐야 합니다.</p>' : ''}
+    <div class="actions">
+      ${existing ? '<button class="btn danger left" id="rDel">삭제</button>' : ''}
+      <button class="btn" id="rCancel">취소</button>
+      ${needsReport(r.cause) && !existing?.reportId ? '<button class="btn" id="rSaveRep">저장 후 신고서</button>' : ''}
+      <button class="btn accent" id="rSave">저장</button>
+    </div>`;
+
+  const read = root => {
+    const v = id => root.querySelector('#' + id);
+    const no = +v('rNo').value || null;
+    r.no = no;
+    r.name = byNo(no)?.name || (no === existing?.no ? existing.name : '');
+    r.start = v('rStart').value;
+    if (r.kind === '결석') { r.end = v('rEnd').value || r.start; r.days = v('rDays').value; }
+    else r.period = v('rPeriod').value.trim();
+    r.reason = v('rReason').value.trim();
+    r.docsIn = v('rDocsIn').checked;
+    r.neis = v('rNeis').checked;
+    r.memo = v('rMemo').value.trim();
+  };
+
+  const draw = () => openModal(html(), bind);
+
+  function updateDays(root) {
+    const note = root.querySelector('#rDaysNote');
+    const start = root.querySelector('#rStart').value;
+    if (r.kind !== '결석') {
+      const why = isDateStr(start) && offReason(start, offDays());
+      note.textContent = why ? `※ ${shortLabel(start)}은(는) ${why}입니다.` : '';
+      return;
+    }
+    const end = root.querySelector('#rEnd').value || start;
+    if (!isDateStr(start) || !isDateStr(end) || end < start) { note.textContent = '종료일이 시작일보다 빠릅니다.'; return; }
+    const auto = countSchoolDays(start, end, offDays());
+    if (!daysManual) root.querySelector('#rDays').value = auto;
+    const skipped = [];
+    for (let d = start; d <= end && skipped.length < 40; d = addDays(d, 1)) {
+      const why = offReason(d, offDays());
+      if (why && why !== '주말') skipped.push(`${shortLabel(d)} ${why}`);
+    }
+    note.textContent = `주말·공휴일 빼고 ${auto}일` + (skipped.length ? ` (제외: ${skipped.join(', ')})` : '') + (daysManual ? ' — 직접 입력한 값을 씁니다.' : '');
+  }
+
+  function bind(root) {
+    const q = s => root.querySelector(s);
+    q('#rKind').querySelectorAll('button').forEach(b => b.onclick = () => { read(root); r.kind = b.dataset.v; daysManual = false; Object.assign(r, normalizeRecord(r)); if (r.kind === '결석') r.days = countSchoolDays(r.start, r.end, offDays()); draw(); });
+    q('#rCause').querySelectorAll('button').forEach(b => b.onclick = () => { read(root); r.cause = b.dataset.v; draw(); });
+    q('#rStart').oninput = () => {
+      if (r.kind === '결석') { const e = q('#rEnd'); if (!e.value || e.value < q('#rStart').value) e.value = q('#rStart').value; }
+      updateDays(root);
+    };
+    q('#rEnd')?.addEventListener('input', () => updateDays(root));
+    q('#rDays')?.addEventListener('input', () => { daysManual = true; updateDays(root); });
+    q('#rReasonP').querySelectorAll('button').forEach(b => b.onclick = () => {
+      const inp = q('#rReason');
+      inp.value = inp.value ? `${inp.value}, ${b.dataset.v}` : b.dataset.v;
+    });
+    q('#rDocs').querySelectorAll('button').forEach(b => b.onclick = () => {
+      const d = b.dataset.v;
+      r.docs = r.docs.includes(d) ? r.docs.filter(x => x !== d) : [...r.docs, d];
+      b.classList.toggle('on');
+    });
+    q('#rDocAdd').onclick = () => {
+      const d = q('#rDocNew').value.trim();
+      if (!d) return;
+      read(root);
+      if (!r.docs.includes(d)) r.docs.push(d);
+      draw();
+    };
+    q('#rCancel').onclick = closeModal;
+    q('#rDel')?.addEventListener('click', async () => {
+      if (!confirm(`${existing.name} ${rangeLabel(existing).replace('<br>', '')} ${typeLabel(existing)} 기록을 삭제할까요?`)) return;
+      try { await store.deleteRecord(S.cls.id, existing.id); S.sel.delete(existing.id); closeModal(); toast('삭제했습니다.'); }
+      catch (e) { fail(e); }
+    });
+    const save = async thenReport => {
+      read(root);
+      if (!r.no) return toast('학생을 선택하세요.');
+      if (!r.name) return toast('명렬표에 없는 학생입니다.');
+      if (!isDateStr(r.start)) return toast('날짜를 입력하세요.');
+      if (r.kind === '결석' && (!isDateStr(r.end) || r.end < r.start)) return toast('종료일을 확인하세요.');
+      const rec = normalizeRecord(r);
+      if (rec.kind === '결석' && (rec.days === '' || rec.days == null)) rec.days = countSchoolDays(rec.start, rec.end, offDays());
+      try {
+        const id = await store.saveRecord(S.cls.id, rec);
+        closeModal();
+        toast('저장했습니다.');
+        if (thenReport) makeReport([{ ...rec, id }]);
+      } catch (e) { fail(e); }
+    };
+    q('#rSave').onclick = () => save(false);
+    q('#rSaveRep')?.addEventListener('click', () => save(true));
+    updateDays(root);
+  }
+
+  draw();
+}
+
+// ── 신고서 탭 ───────────────────────────────────────
+
+function reportDates(p) {
+  const it = p.items || {};
+  return [it.late?.date, it.early?.date, it.result?.date, it.absent?.start, it.absent?.end].filter(Boolean).sort();
+}
+
+function reportSummary(p) {
+  const it = p.items || {};
+  const parts_ = [];
+  if (it.late) parts_.push(`지각 ${shortLabel(it.late.date)}`);
+  if (it.early) parts_.push(`조퇴 ${shortLabel(it.early.date)}`);
+  if (it.result) parts_.push(`결과 ${shortLabel(it.result.date)}`);
+  if (it.absent) parts_.push(`결석 ${shortLabel(it.absent.start)}${it.absent.end !== it.absent.start ? '~' + shortLabel(it.absent.end) : ''} (${it.absent.days}일)`);
+  return parts_.join(', ') || '기간 없음';
+}
+
+function renderReports(body) {
+  const list = S.reports
+    .filter(p => { const d = reportDates(p); return d.length ? inMonth(d[0], d.at(-1)) : inMonth(p.written, p.written); })
+    .filter(p => !S.filterNo || p.no === +S.filterNo)
+    .sort((a, b) => (reportDates(b)[0] || b.written).localeCompare(reportDates(a)[0] || a.written) || a.no - b.no);
+  const todo = todoCount();
+
+  body.innerHTML = `
+    ${todo ? `<div class="card"><b>신고서가 필요한 기록이 ${todo}건 있습니다.</b>
+      <span class="hint">출결 기록 탭에서 "신고서 필요"를 누르거나, 같은 학생 기록 여러 건을 골라 한 장으로 만들 수 있습니다.</span>
+      <div class="actions" style="justify-content:flex-start;margin-top:10px;"><button class="btn sm" id="goTodo">기록 보기</button></div></div>` : ''}
+    <div class="toolbar">
+      ${monthNav()}
+      <span class="grow"></span>
+      <select class="inp" id="fNo">${`<option value="">전체 학생</option>` + S.students.map(s => `<option value="${s.no}" ${String(s.no) === String(S.filterNo) ? 'selected' : ''}>${esc(studentLabel(s))}</option>`).join('')}</select>
+      <button class="btn sm" id="btnAllPrint" ${list.length ? '' : 'disabled'}><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>목록 전체 출력</button>
+      <button class="btn sm accent" id="btnNewRep"><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>빈 신고서</button>
+    </div>
+    <div class="list">
+      ${!S.loaded.reports ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(p => `
+        <div class="row" data-id="${esc(p.id)}">
+          <span><input type="checkbox" ${S.printSel.has(p.id) ? 'checked' : ''} title="출력할 신고서 선택"></span>
+          <span class="date">${shortLabel(p.written)}<br><span class="hint">작성</span></span>
+          <div class="main">
+            <div class="who">${p.no}번 ${esc(p.name)} <span class="chip c-${esc(p.cause)}">${esc(p.cause)}</span></div>
+            <div class="sub">${esc(reportSummary(p))} · ${esc(p.reason || '사유 없음')}</div>
+          </div>
+          <div class="flags"><button class="chip" data-print title="이 신고서 출력"><svg width="12" height="12"><use href="#ic-print"/></svg>출력</button></div>
+        </div>`).join('') : '<div class="empty">신고서가 없습니다.</div>'}
+    </div>
+    ${S.printSel.size ? `<div class="selbar"><span>${S.printSel.size}장 선택</span>
+      <span><button class="btn sm ghost" id="selClear">선택 해제</button>
+      <button class="btn sm accent" id="selPrint">한 번에 출력</button></span></div>` : ''}`;
+
+  bindMonthNav(body);
+  $('goTodo')?.addEventListener('click', () => { S.tab = 'records'; S.todoOnly = true; S.month = 'all'; render(); });
+  $('fNo').onchange = e => { S.filterNo = e.target.value; render(); };
+  $('btnAllPrint').onclick = () => printReports(list);
+  $('btnNewRep').onclick = pickStudentForReport;
+  body.querySelectorAll('.row[data-id]').forEach(row => {
+    const p = S.reports.find(x => x.id === row.dataset.id);
+    row.onclick = e => { if (!e.target.closest('input,button')) openEditor(p); };
+    row.querySelector('input[type=checkbox]').onchange = e => { e.target.checked ? S.printSel.add(p.id) : S.printSel.delete(p.id); render(); };
+    row.querySelector('[data-print]').onclick = () => printReports([p]);
+  });
+  $('selClear')?.addEventListener('click', () => { S.printSel.clear(); render(); });
+  $('selPrint')?.addEventListener('click', () => printReports(list.filter(p => S.printSel.has(p.id))));
+}
+
+function pickStudentForReport() {
+  if (!S.students.length) return toast('명렬표를 먼저 올려 주세요.');
+  openModal(`
+    <h2>빈 신고서</h2>
+    <div class="field"><label>학생</label><select class="inp" id="pNo">${studentOptions(null)}</select></div>
+    <p class="hint">출결 기록 없이 신고서만 만듭니다. 기록과 연결하려면 출결 기록 탭에서 만드세요.</p>
+    <div class="actions"><button class="btn" id="pCancel">취소</button><button class="btn accent" id="pGo">만들기</button></div>`,
+  root => {
+    root.querySelector('#pCancel').onclick = closeModal;
+    root.querySelector('#pGo').onclick = () => {
+      const s = byNo(+root.querySelector('#pNo').value);
+      if (!s) return toast('학생을 선택하세요.');
+      closeModal();
+      const r = emptyReport();
+      Object.assign(r, { no: s.no, name: s.name, selfName: s.name, guardianName: s.guardian || '', teacherName: S.cls.teacherName || '' });
+      openEditor(r);
+    };
+  });
+}
+
+function makeReport(recs) {
+  const nos = new Set(recs.map(r => r.no));
+  if (nos.size > 1) return toast('같은 학생의 기록만 한 신고서로 묶을 수 있습니다.');
+  const usable = recs.filter(r => needsReport(r.cause));
+  if (!usable.length) return toast('질병·출석인정 기록만 신고서를 만들 수 있습니다.');
+  const { report, warnings } = reportFromRecords(usable, {
+    student: byNo(usable[0].no), teacherName: S.cls.teacherName || '', offDays: offDays(),
+  });
+  S.sel.clear();
+  openEditor(report, warnings);
+}
+
+// ── 신고서 편집기 ───────────────────────────────────
+
+let E = null; // { r, prevIds, absManual, warnings }
+
+function closeEditor() {
+  $('editor').classList.add('hidden');
+  $('editor').innerHTML = '';
+  document.body.style.overflow = '';
+  E = null;
+}
+
+function openEditor(rep, warnings = []) {
+  // createdAt(Firestore Timestamp)은 structuredClone하면 일반 객체가 돼 규칙에 걸린다 — 따로 옮긴다.
+  const { createdAt, updatedAt: _updatedAt, ...rest } = rep;
+  const r = structuredClone({ ...emptyReport(), ...rest, items: { ...emptyReport().items, ...(rest.items || {}) } });
+  if (createdAt) r.createdAt = createdAt;
+  const a = r.items.absent;
+  E = {
+    r, warnings,
+    prevIds: rep.id ? [...(rep.recordIds || [])] : [],
+    absManual: !!(a && a.days !== countSchoolDays(a.start, a.end, offDays())),
+  };
+  document.body.style.overflow = 'hidden';
+  $('editor').classList.remove('hidden');
+  drawEditor();
+}
+
+function drawEditor() {
+  const { r } = E;
+  const it = r.items;
+  const oneRow = (kind, label) => {
+    const key = ITEM_KEYS[kind], v = it[key];
+    return `<div class="period-row">
+      <label class="check"><input type="checkbox" data-item="${key}" ${v ? 'checked' : ''}>${label}</label>
+      <input class="inp" type="date" data-f="${key}.date" value="${esc(v?.date || '')}" ${v ? '' : 'disabled'}>
+      <input class="inp" data-f="${key}.period" placeholder="교시" maxlength="10" value="${esc(v?.period || '')}" ${v ? '' : 'disabled'}>
+    </div>`;
+  };
+  const ab = it.absent;
+  $('editor').innerHTML = `
+    <div class="form-col">
+      <div class="editor-head">
+        <h2>${r.id ? '신고서 수정' : '새 신고서'}</h2>
+        <button class="icon-btn" id="eClose" title="닫기"><svg width="16" height="16"><use href="#ic-close"/></svg></button>
+      </div>
+      ${E.warnings.map(w => `<p class="hint warn">※ ${esc(w)}</p>`).join('')}
+      <div class="field"><label>학생</label><select class="inp" id="eNo">${studentOptions(r.no, r.name)}</select></div>
+      <div class="field"><span class="lab">구분 (위 문장 동그라미)</span><div class="seg" id="eCause">${['출석인정', '질병'].map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div></div>
+
+      <div class="field"><span class="lab">1. 기간 — 체크한 종류에 동그라미가 자동으로 쳐집니다</span>
+        ${oneRow('지각', '지각')}${oneRow('조퇴', '조퇴')}${oneRow('결과', '결과')}
+        <div class="period-row absent">
+          <label class="check"><input type="checkbox" data-item="absent" ${ab ? 'checked' : ''}>결석</label>
+          <input class="inp" type="date" data-f="absent.start" value="${esc(ab?.start || '')}" ${ab ? '' : 'disabled'}>
+          <input class="inp" type="date" data-f="absent.end" value="${esc(ab?.end || '')}" ${ab ? '' : 'disabled'}>
+          <input class="inp" type="number" min="0" max="400" data-f="absent.days" title="일수" value="${esc(ab?.days ?? '')}" ${ab ? '' : 'disabled'}>
+        </div>
+        <p class="hint" id="eAbsNote"></p>
+      </div>
+
+      <div class="field"><label>2. 사유</label><input class="inp" data-f="reason" maxlength="200" value="${esc(r.reason)}">
+        <div class="presets" data-preset="reason">${REASON_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div></div>
+      <div class="grid3">
+        <div class="field"><label>작성일</label><input class="inp" type="date" data-f="written" value="${esc(r.written)}"></div>
+        <div class="field"><label>본인 이름</label><input class="inp" data-f="selfName" maxlength="40" value="${esc(r.selfName)}"></div>
+        <div class="field"><label>보호자 이름</label><input class="inp" data-f="guardianName" maxlength="40" placeholder="비우면 빈칸" value="${esc(r.guardianName)}"></div>
+      </div>
+
+      <h3 style="margin-top:6px;">확인서</h3>
+      <div class="field"><span class="lab">1. 확인방법</span><div class="seg" id="eMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
+        ${r.method === '기타' ? `<input class="inp" style="margin-top:8px;" data-f="methodEtc" maxlength="60" placeholder="기타 확인방법" value="${esc(r.methodEtc)}">` : ''}</div>
+      <div class="grid3">
+        <div class="field"><label>확인 날짜</label><input class="inp" type="date" data-f="confirmDate" value="${esc(r.confirmDate)}"></div>
+        <div class="field"><label>시</label><input class="inp" data-f="confirmHour" maxlength="10" inputmode="numeric" placeholder="예: 13" value="${esc(r.confirmHour)}"></div>
+        <div class="field"><label>대화자</label><input class="inp" data-f="talker" maxlength="30" value="${esc(r.talker)}"></div>
+      </div>
+      <div class="presets" data-preset="talker" style="margin:-6px 0 14px;">${TALKER_PRESETS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div>
+      <div class="field"><label>2. 첨부</label><textarea class="inp" data-f="attach" rows="3" maxlength="400">${esc(r.attach)}</textarea>
+        <div class="presets" data-preset="attach">${DOC_OPTIONS.map(p => `<button data-v="${esc(p)}">${esc(p)}</button>`).join('')}</div>
+        <p class="hint" id="eAttachNote"></p></div>
+      <div class="grid2">
+        <div class="field"><label>확인서 날짜</label><input class="inp" type="date" data-f="confirmedOn" value="${esc(r.confirmedOn)}"></div>
+        <div class="field"><label>담임 이름</label><input class="inp" data-f="teacherName" maxlength="20" value="${esc(r.teacherName)}"></div>
+      </div>
+      <div class="actions">
+        ${r.id ? '<button class="btn danger left" id="eDel">삭제</button>' : ''}
+        <button class="btn" id="eCancel">닫기</button>
+        <button class="btn" id="ePrint"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-print"/></svg>저장 후 출력</button>
+        <button class="btn accent" id="eSave">저장</button>
+      </div>
+    </div>
+    <div class="prev-col">
+      ${fontNote()}
+      <div class="preview-box" id="ePrevBox"><div class="preview-scale" id="ePrev"></div></div>
+    </div>`;
+  bindEditor();
+  updatePreview();
+}
+
+function setPath(obj, path, val) {
+  const ks = path.split('.');
+  let o = obj;
+  while (ks.length > 1) o = o[ks.shift()];
+  o[ks[0]] = val;
+}
+
+function bindEditor() {
+  const ed = $('editor');
+  const r = E.r;
+  const q = s => ed.querySelector(s);
+
+  q('#eClose').onclick = closeEditor;
+  q('#eCancel').onclick = closeEditor;
+  q('#eNo').onchange = e => {
+    const s = byNo(+e.target.value);
+    if (!s) return;
+    if (!r.selfName || r.selfName === r.name) r.selfName = s.name;
+    r.no = s.no; r.name = s.name;
+    r.guardianName = s.guardian || r.guardianName;
+    drawEditor();
+  };
+  q('#eCause').querySelectorAll('button').forEach(b => b.onclick = () => { r.cause = b.dataset.v; drawEditor(); });
+  q('#eMethod').querySelectorAll('button').forEach(b => b.onclick = () => { r.method = r.method === b.dataset.v ? '' : b.dataset.v; drawEditor(); });
+
+  ed.querySelectorAll('[data-item]').forEach(cb => cb.onchange = () => {
+    const key = cb.dataset.item;
+    const base = r.items.absent?.start || r.items.early?.date || r.items.late?.date || r.items.result?.date || r.confirmDate || today();
+    if (!cb.checked) r.items[key] = null;
+    else if (key === 'absent') { r.items.absent = { start: base, end: base, days: countSchoolDays(base, base, offDays()) }; E.absManual = false; }
+    else r.items[key] = { date: base, period: '' };
+    drawEditor();
+  });
+
+  ed.querySelectorAll('[data-f]').forEach(inp => inp.addEventListener('input', () => {
+    const f = inp.dataset.f;
+    setPath(r, f, inp.value);
+    if (f === 'absent.start' && r.items.absent && (!r.items.absent.end || r.items.absent.end < inp.value)) {
+      r.items.absent.end = inp.value;
+      q('[data-f="absent.end"]').value = inp.value;
+    }
+    if (f === 'absent.days') E.absManual = true;
+    if ((f === 'absent.start' || f === 'absent.end') && !E.absManual) {
+      r.items.absent.days = countSchoolDays(r.items.absent.start, r.items.absent.end, offDays());
+      q('[data-f="absent.days"]').value = r.items.absent.days;
+    }
+    updatePreview();
+  }));
+
+  ed.querySelectorAll('[data-preset]').forEach(box => box.querySelectorAll('button').forEach(b => b.onclick = () => {
+    const f = box.dataset.preset;
+    const inp = q(`[data-f="${f}"]`);
+    inp.value = f === 'talker' ? b.dataset.v : (inp.value.trim() ? `${inp.value.trim()}, ${b.dataset.v}` : b.dataset.v);
+    r[f] = inp.value;
+    updatePreview();
+  }));
+
+  q('#eSave').onclick = () => saveEditor(false);
+  q('#ePrint').onclick = () => saveEditor(true);
+  q('#eDel')?.addEventListener('click', async () => {
+    if (!confirm(`${r.name} 신고서를 삭제할까요? (출결 기록은 남습니다)`)) return;
+    try {
+      await store.deleteReport(S.cls.id, r, new Set(S.records.map(x => x.id)));
+      closeEditor();
+      toast('삭제했습니다.');
+    } catch (e) { fail(e); }
+  });
+}
+
+function sheetData(r) {
+  return { ...r, grade: S.cls.grade, cls: S.cls.cls };
+}
+
+let resizeBound = false;
+function updatePreview() {
+  if (!E) return;
+  const box = $('ePrevBox'), prev = $('ePrev');
+  if (!box) return;
+  prev.innerHTML = renderSheet(sheetData(E.r));
+  const scale = Math.min(1, box.clientWidth / 794);
+  prev.style.transform = `scale(${scale})`;
+  prev.style.width = '794px';
+  box.style.height = `${1123 * scale}px`;
+
+  const ab = E.r.items.absent;
+  const note = $('eAbsNote');
+  if (note) {
+    note.textContent = ab
+      ? (ab.end < ab.start ? '결석 종료일이 시작일보다 빠릅니다.'
+        : `결석 일수: 주말·공휴일 빼면 ${countSchoolDays(ab.start, ab.end, offDays())}일${E.absManual ? ' (직접 입력한 값을 씁니다)' : ''}`)
+      : '';
+  }
+  const an = $('eAttachNote');
+  if (an) {
+    const sheet = prev.querySelector('.attach');
+    const lines = sheet ? Math.round(sheet.getBoundingClientRect().height / scale / (19.2 * 96 / 72)) : 1;
+    an.textContent = lines > 3 ? `첨부가 ${lines}줄입니다. 3줄을 넘으면 아래 칸이 밀려 종이 끝에 가까워집니다.` : '';
+  }
+  if (!resizeBound) {
+    resizeBound = true;
+    window.addEventListener('resize', () => updatePreview());
+  }
+}
+
+function validateReport(r) {
+  if (!r.no) return '학생을 선택하세요.';
+  const it = r.items;
+  if (!it.late && !it.early && !it.result && !it.absent) return '1. 기간에서 하나 이상 체크하세요.';
+  for (const k of ['late', 'early', 'result']) if (it[k] && !isDateStr(it[k].date)) return '기간의 날짜를 입력하세요.';
+  if (it.absent) {
+    if (!isDateStr(it.absent.start) || !isDateStr(it.absent.end)) return '결석 기간을 입력하세요.';
+    if (it.absent.end < it.absent.start) return '결석 종료일이 시작일보다 빠릅니다.';
+  }
+  return null;
+}
+
+async function saveEditor(thenPrint) {
+  const r = E.r;
+  const err = validateReport(r);
+  if (err) return toast(err);
+  const existing = new Set(S.records.map(x => x.id));
+  r.recordIds = (r.recordIds || []).filter(id => existing.has(id));
+  const prev = E.prevIds.filter(id => existing.has(id));
+  try {
+    const id = await store.saveReport(S.cls.id, r, prev);
+    r.id = id;
+    E.prevIds = [...r.recordIds];
+    toast('저장했습니다.');
+    if (thenPrint) printReports([r]);
+    closeEditor();
+  } catch (e) { fail(e); }
+}
+
+// ── 인쇄 ───────────────────────────────────────────
+
+/**
+ * 출력하는 기기에 굴림·함초롬돋움이 있는지. document.fonts.check는 설치 안 된
+ * 로컬 글꼴에도 true를 주는 브라우저가 있어, 글자 폭을 직접 재서 판단한다.
+ */
+function hasFont(name) {
+  const c = document.createElement('canvas').getContext('2d');
+  const text = '가나다라 출결 신고서 abcXYZ 0123';
+  return ['monospace', 'serif'].some(base => {
+    c.font = `40px ${base}`;
+    const w0 = c.measureText(text).width;
+    c.font = `40px "${name}", ${base}`;
+    return c.measureText(text).width !== w0;
+  });
+}
+
+function fontNote() {
+  const missing = [];
+  if (!hasFont('굴림') && !hasFont('Gulim')) missing.push('굴림');
+  if (!hasFont('함초롬돋움') && !hasFont('HCR Dotum')) missing.push('함초롬돋움');
+  if (!missing.length) return '';
+  return `<div class="font-note">이 기기에 ${missing.join('·')} 글꼴이 없어 나눔고딕으로 대신 보입니다. 칸 위치는 같지만 글자 모양이 원본과 조금 다릅니다.
+    원본과 같은 글꼴로 출력하려면 학교 PC(Windows, 한글 설치)에서 출력하세요.</div>`;
+}
+
+async function printReports(list) {
+  if (!list.length) return;
+  const area = $('printArea');
+  area.innerHTML = list.map(p => renderSheet(sheetData(p))).join('');
+  try { await document.fonts.ready; } catch {}
+  const clear = () => { area.innerHTML = ''; window.removeEventListener('afterprint', clear); };
+  window.addEventListener('afterprint', clear);
+  setTimeout(() => window.print(), 50);
+}
+
+// ── 명렬표 탭 ───────────────────────────────────────
+
+function renderStudents(body) {
+  body.innerHTML = `
+    <div class="card">
+      <h2>명렬표 (${S.students.length}명)</h2>
+      <p class="hint">CSV 양식: <b>학년,반,번호,이름,보호자명</b>. 학년 전체 명렬표를 올려도 ${S.cls.grade}학년 ${S.cls.cls}반 학생만 골라 넣습니다.
+      CSV를 올리면 명렬표를 통째로 바꿉니다(이미 저장된 출결 기록은 그대로 남습니다).</p>
+      <div class="toolbar" style="margin:12px 0 0;">
+        <label class="btn sm accent" style="display:inline-flex;align-items:center;gap:4px;">
+          <svg width="14" height="14"><use href="#ic-upload"/></svg>CSV 올리기<input type="file" id="csvFile" accept=".csv,text/csv" hidden></label>
+        <button class="btn sm" id="btnTpl"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-download"/></svg>양식 받기</button>
+        <button class="btn sm" id="btnAddStu"><svg width="13" height="13" style="vertical-align:-2px;margin-right:2px;"><use href="#ic-plus"/></svg>학생 추가</button>
+      </div>
+    </div>
+    <div class="card">
+      ${!S.loaded.students ? '<div class="empty">불러오는 중…</div>' : S.students.length ? `
+      <table class="tbl"><thead><tr><th>번호</th><th>이름</th><th>보호자</th></tr></thead><tbody>
+        ${S.students.map(s => `<tr class="click" data-no="${s.no}"><td class="num">${s.no}</td><td>${esc(s.name)}</td><td>${esc(s.guardian) || '<span class="hint">—</span>'}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">아직 학생이 없습니다. CSV를 올려 주세요.</div>'}
+    </div>`;
+
+  $('csvFile').onchange = async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    const text = decodeCsv(new Uint8Array(await f.arrayBuffer()));
+    previewRoster(parseRoster(text, { grade: S.cls.grade, cls: S.cls.cls }));
+  };
+  $('btnTpl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([TEMPLATE], { type: 'text/csv;charset=utf-8' }));
+    a.download = '명렬표_양식.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+  $('btnAddStu').onclick = () => editStudent(null);
+  body.querySelectorAll('tr[data-no]').forEach(tr => tr.onclick = () => editStudent(byNo(+tr.dataset.no)));
+}
+
+function previewRoster({ students, errors, skipped }) {
+  const removed = S.students.filter(s => !students.some(n => n.no === s.no));
+  openModal(`
+    <h2>명렬표 확인</h2>
+    <p class="hint">${S.cls.grade}학년 ${S.cls.cls}반 <b>${students.length}명</b>${skipped ? ` · 다른 반 ${skipped}줄 건너뜀` : ''}${removed.length ? ` · 기존 명단에서 빠지는 학생 ${removed.length}명` : ''}</p>
+    ${errors.length ? `<div class="hint warn">${errors.slice(0, 10).map(esc).join('<br>')}${errors.length > 10 ? `<br>외 ${errors.length - 10}건` : ''}</div>` : ''}
+    <div style="max-height:46vh;overflow:auto;margin-top:10px;">
+      <table class="tbl"><thead><tr><th>번호</th><th>이름</th><th>보호자</th></tr></thead><tbody>
+      ${students.map(s => `<tr><td class="num">${s.no}</td><td>${esc(s.name)}</td><td>${esc(s.guardian)}</td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="actions"><button class="btn" id="mCancel">취소</button><button class="btn accent" id="mGo" ${students.length ? '' : 'disabled'}>이대로 저장</button></div>`,
+  root => {
+    root.querySelector('#mCancel').onclick = closeModal;
+    root.querySelector('#mGo').onclick = async e => {
+      e.target.disabled = true;
+      try { await store.replaceRoster(S.cls.id, students, S.students); closeModal(); toast(`${students.length}명 저장했습니다.`); }
+      catch (err) { fail(err); e.target.disabled = false; }
+    };
+  });
+}
+
+function editStudent(s) {
+  openModal(`
+    <h2>${s ? '학생 수정' : '학생 추가'}</h2>
+    <div class="grid3">
+      <div class="field"><label>번호</label><input class="inp" type="number" min="1" max="99" id="sNo" value="${s?.no ?? ''}"></div>
+      <div class="field" style="grid-column:span 2;"><label>이름</label><input class="inp" id="sName" maxlength="40" value="${esc(s?.name)}"></div>
+    </div>
+    <div class="field"><label>보호자 이름</label><input class="inp" id="sGuard" maxlength="40" value="${esc(s?.guardian)}"></div>
+    <div class="actions">
+      ${s ? '<button class="btn danger left" id="sDel">삭제</button>' : ''}
+      <button class="btn" id="sCancel">취소</button><button class="btn accent" id="sSave">저장</button>
+    </div>`,
+  root => {
+    const q = x => root.querySelector(x);
+    q('#sCancel').onclick = closeModal;
+    q('#sDel')?.addEventListener('click', async () => {
+      if (!confirm(`${s.no}번 ${s.name} 학생을 명렬표에서 지울까요? (출결 기록은 남습니다)`)) return;
+      try { await store.deleteStudent(S.cls.id, s.no); closeModal(); } catch (e) { fail(e); }
+    });
+    q('#sSave').onclick = async () => {
+      const no = +q('#sNo').value, name = q('#sName').value.trim(), guardian = q('#sGuard').value.trim();
+      if (!Number.isInteger(no) || no < 1 || no > 99) return toast('번호는 1~99입니다.');
+      if (!name) return toast('이름을 입력하세요.');
+      if (no !== s?.no && byNo(no)) return toast(`${no}번은 이미 있습니다.`);
+      try {
+        await store.saveStudent(S.cls.id, { no, name, guardian });
+        if (s && s.no !== no) await store.deleteStudent(S.cls.id, s.no);
+        closeModal();
+      } catch (e) { fail(e); }
+    };
+  });
+}
+
+// ── 설정 탭 ─────────────────────────────────────────
+
+function renderSettings(body) {
+  const c = S.cls;
+  const off = [...offDays()].sort((a, b) => a.date.localeCompare(b.date));
+  const yearHolidays = Object.entries(HOLIDAYS).filter(([d]) => schoolYearOf(d) === c.year);
+  body.innerHTML = `
+    <div class="card">
+      <h2>${c.year}학년도 ${c.grade}학년 ${c.cls}반</h2>
+      <div class="field"><label>담임 이름 (확인서에 인쇄)</label>
+        <div class="inline"><input class="inp" id="tName" maxlength="20" value="${esc(c.teacherName)}"><button class="btn sm accent" id="tSave">저장</button></div></div>
+    </div>
+
+    <div class="card">
+      <h2>재량휴업일 · 방학</h2>
+      <p class="hint">결석 일수를 셀 때 주말·공휴일과 함께 빠집니다. 공휴일(대체공휴일·선거일 포함)은 이미 들어 있습니다.
+      이미 저장된 기록의 일수는 자동으로 바뀌지 않으니, 필요하면 기록을 열어 다시 저장하세요.</p>
+      <div class="grid3" style="margin-top:10px;">
+        <div class="field"><label>시작일</label><input class="inp" type="date" id="oStart"></div>
+        <div class="field"><label>종료일 (하루면 비움)</label><input class="inp" type="date" id="oEnd"></div>
+        <div class="field"><label>이름</label><input class="inp" id="oLabel" maxlength="20" placeholder="재량휴업일"></div>
+      </div>
+      <button class="btn sm accent" id="oAdd">추가</button>
+      ${off.length ? `<table class="tbl" style="margin-top:12px;"><tbody>${off.map(o => `
+        <tr><td style="width:120px;">${shortLabel(o.date)}</td><td>${esc(o.label)}</td><td style="text-align:right;"><button class="btn sm ghost" data-del="${o.date}">삭제</button></td></tr>`).join('')}</tbody></table>` : ''}
+      <details style="margin-top:12px;"><summary class="hint" style="cursor:pointer;">들어 있는 공휴일 보기 (${yearHolidays.length}일)</summary>
+        <p class="hint">${yearHolidays.map(([d, n]) => `${shortLabel(d)} ${esc(n)}`).join(' · ')}</p></details>
+    </div>
+
+    <div class="card">
+      <h2>학년 말 정리</h2>
+      <p class="hint">이 반의 명렬표·출결 기록·신고서를 모두 지우고 반 등록도 해제합니다. 되돌릴 수 없습니다.
+      필요한 신고서는 먼저 출력해 두세요.</p>
+      <button class="btn danger" id="wipe">이 반 데이터 모두 삭제</button>
+    </div>`;
+
+  $('tSave').onclick = () => store.updateClass(c.id, { teacherName: $('tName').value.trim() }).then(() => toast('저장했습니다.')).catch(fail);
+  $('oAdd').onclick = () => {
+    const start = $('oStart').value, end = $('oEnd').value || start, label = $('oLabel').value.trim() || '재량휴업일';
+    if (!isDateStr(start) || !isDateStr(end) || end < start) return toast('날짜를 확인하세요.');
+    const have = new Set(offDays().map(o => o.date));
+    const add = [];
+    for (let d = start; d <= end; d = addDays(d, 1)) {
+      if (!offReason(d) && !have.has(d)) add.push({ date: d, label }); // 주말·공휴일은 어차피 빠지니 넣지 않는다
+    }
+    if (!add.length) return toast('추가할 평일이 없습니다.');
+    const next = [...offDays(), ...add];
+    if (next.length > 300) return toast('휴업일은 300일까지 넣을 수 있습니다.');
+    store.updateClass(c.id, { offDays: next }).then(() => toast(`${add.length}일 추가했습니다.`)).catch(fail);
+  };
+  body.querySelectorAll('[data-del]').forEach(b => b.onclick = () =>
+    store.updateClass(c.id, { offDays: offDays().filter(o => o.date !== b.dataset.del) }).catch(fail));
+  $('wipe').onclick = async () => {
+    const typed = prompt(`정말 삭제하려면 "${c.grade}학년 ${c.cls}반 삭제" 라고 입력하세요.`);
+    if (typed !== `${c.grade}학년 ${c.cls}반 삭제`) return;
+    try {
+      stopWatching();
+      await store.wipeClass(c.id);
+      try { localStorage.removeItem(CLASS_KEY); } catch {}
+      location.reload();
+    } catch (e) { fail(e); }
+  };
+}
+
+// ── 관리 탭 (관리자만) ───────────────────────────────
+
+async function renderAdmin(body) {
+  body.innerHTML = '<div class="empty">불러오는 중…</div>';
+  let allowed, classes;
+  try { [allowed, classes] = await Promise.all([store.listAllowed(), store.listAllClasses()]); }
+  catch (e) { fail(e); body.innerHTML = '<div class="empty">불러오지 못했습니다.</div>'; return; }
+  if (S.tab !== 'admin') return;
+
+  body.innerHTML = `
+    <div class="card">
+      <h2>사용 허용 계정 (${allowed.length})</h2>
+      <p class="hint">여기 등록된 Gmail 계정만 로그인 후 사용할 수 있습니다. 삭제하면 그 선생님은 즉시 자기 반 데이터에도 접근할 수 없습니다.</p>
+      <div class="grid3" style="margin-top:10px;">
+        <div class="field" style="grid-column:span 2;"><label>이메일</label><input class="inp" id="aEmail" type="email" placeholder="teacher@gmail.com"></div>
+        <div class="field"><label>메모 (이름 등)</label><input class="inp" id="aNote" maxlength="40"></div>
+      </div>
+      <button class="btn sm accent" id="aAdd">추가</button>
+      <table class="tbl" style="margin-top:12px;"><tbody>
+        ${allowed.map(a => `<tr><td>${esc(a.id)}</td><td class="hint">${esc(a.note)}</td><td style="text-align:right;"><button class="btn sm ghost" data-rm="${esc(a.id)}">삭제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
+      </tbody></table>
+    </div>
+    <div class="card">
+      <h2>등록된 반 (${classes.length})</h2>
+      <p class="hint">"등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 다음에 그 반을 등록하는 선생님이 이어받습니다(담임 교체용).
+      관리자도 학생 정보는 볼 수 없습니다.</p>
+      <table class="tbl" style="margin-top:8px;"><thead><tr><th>반</th><th>담임</th><th>계정</th><th></th></tr></thead><tbody>
+        ${classes.map(c => `<tr><td>${c.year} ${c.grade}-${c.cls}</td><td>${esc(c.teacherName)}</td><td class="hint">${esc(c.ownerEmail)}</td>
+          <td style="text-align:right;"><button class="btn sm ghost" data-rel="${esc(c.id)}">등록 해제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
+      </tbody></table>
+    </div>`;
+
+  $('aAdd').onclick = async () => {
+    const email = $('aEmail').value.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('이메일 형식을 확인하세요.');
+    try { await store.addAllowed(email, $('aNote').value.trim()); toast('추가했습니다.'); render(); }
+    catch (e) { fail(e); }
+  };
+  body.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${b.dataset.rm} 계정의 사용 허용을 해제할까요?`)) return;
+    try { await store.removeAllowed(b.dataset.rm); render(); } catch (e) { fail(e); }
+  });
+  body.querySelectorAll('[data-rel]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${b.dataset.rel} 반의 담임 등록을 해제할까요?`)) return;
+    try { await store.releaseClass(b.dataset.rel); render(); } catch (e) { fail(e); }
+  });
+}
