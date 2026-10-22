@@ -85,13 +85,22 @@ test('기록의 보호자 확인이 신고서 확인서로 들어간다', () => 
   assert.equal(none.confirmDate, '2026-03-10');
 });
 
-test('작성일은 마지막 출결일 다음 수업일(오늘이 더 이르면 오늘)', () => {
+test('작성일은 마지막 출결일의 다음 수업일, 확인서 날짜는 그다음 수업일', () => {
   const r1 = reportFromRecords([rec({ start: '2026-03-10', end: '2026-03-11' })], { today: '2026-10-22' }).report;
   assert.equal(r1.written, '2026-03-12');
+  assert.equal(r1.confirmedOn, '2026-03-13');
+  // 금요일 결석 → 월요일 작성 → 화요일 확인
   const r2 = reportFromRecords([rec({ start: '2026-03-06', end: '2026-03-06' })], { today: '2026-10-22' }).report;
-  assert.equal(r2.written, '2026-03-09'); // 금요일 다음 수업일은 월요일
+  assert.equal(r2.written, '2026-03-09');
+  assert.equal(r2.confirmedOn, '2026-03-10');
+  // 목요일 결석 → 금요일 작성 → 주말 건너 월요일 확인
   const r3 = reportFromRecords([rec({ start: '2026-10-22', end: '2026-10-22' })], { today: '2026-10-22' }).report;
-  assert.equal(r3.written, '2026-10-22');
+  assert.equal(r3.written, '2026-10-23');
+  assert.equal(r3.confirmedOn, '2026-10-26');
+  // 공휴일도 건너뛴다: 10/2(금) 결석 → 10/5(대체공휴일) 건너 10/6 작성 → 10/7 확인
+  const r4 = reportFromRecords([rec({ start: '2026-10-02', end: '2026-10-02' })]).report;
+  assert.equal(r4.written, '2026-10-06');
+  assert.equal(r4.confirmedOn, '2026-10-07');
 });
 
 import { periodParts, joinPeriod, periodLabel } from '../public/model.js';

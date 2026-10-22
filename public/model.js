@@ -106,12 +106,11 @@ export function reportFromRecords(recs, { student, teacherName = '', offDays = [
   r.selfName = r.name;
   r.guardianName = student?.guardian || '';
   r.teacherName = teacherName;
-  // 작성일·확인서 날짜: 보통 다녀온 다음 수업일에 낸다. 지난 기록을 몰아서 출력해도
-  // "오늘"이 아니라 그 무렵 날짜가 찍히게 한다(오늘이 더 이르면 오늘).
+  // 작성일은 마지막 출결일의 다음 수업일, 확인서 날짜는 그다음 수업일.
+  // 주말·공휴일·재량휴업일은 건너뛴다(금요일 결석 → 월요일 작성 → 화요일 확인).
   const lastDay = sorted.map(x => x.end || x.start).sort().at(-1);
-  const due = lastDay ? nextSchoolDay(lastDay, offDays) : today;
-  r.written = today < due ? today : due;
-  r.confirmedOn = r.written;
+  r.written = lastDay ? nextSchoolDay(lastDay, offDays) : today;
+  r.confirmedOn = nextSchoolDay(r.written, offDays);
   r.recordIds = sorted.map(x => x.id).filter(Boolean);
 
   const causes = uniq(sorted.map(x => x.cause));
