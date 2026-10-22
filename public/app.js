@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610222350';
-import * as store from './store.js?v=2610222350';
-import { renderSheet } from './form.js?v=2610222350';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222350';
+import { CONFIGURED } from './firebase-config.js?v=2610222355';
+import * as store from './store.js?v=2610222355';
+import { renderSheet } from './form.js?v=2610222355';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222355';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610222350';
+} from './dates.js?v=2610222355';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610222350';
+} from './model.js?v=2610222355';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -419,6 +419,19 @@ function bindMonthNav(root) {
 }
 
 /** 기간이 이 달과 겹치면 보인다 (3/30~4/2 결석은 3월·4월 둘 다). */
+/**
+ * 저장한 기록·신고서가 지금 보는 달·학생 밖이면 화면을 그 달로 옮긴다. 지난 달 기록을 입력했는데
+ * 이번 달 목록에 안 보이면 "입력이 안 된 것"으로 오해하기 쉽다.
+ * @returns {string} 화면이 바뀌었으면 안내 문구, 아니면 ''
+ */
+function showMonthOf(start, end, no) {
+  const notes = [];
+  if (!inMonth(start, end || start)) { S.month = start.slice(0, 7); notes.push(`${+start.slice(5, 7)}월 목록으로 이동했습니다.`); }
+  if (S.filterNo && no && +S.filterNo !== no) { S.filterNo = ''; notes.push('학생 필터를 풀었습니다.'); }
+  if (notes.length) render();
+  return notes.join(' ');
+}
+
 function inMonth(start, end) {
   if (S.month === 'all') return true;
   const first = `${S.month}-01`, last = `${S.month}-31`;
@@ -689,7 +702,8 @@ function openRecord(existing) {
       try {
         const id = await store.saveRecord(S.cls.id, rec);
         closeModal();
-        toast('저장했습니다.');
+        const moved = showMonthOf(rec.start, rec.end, rec.no);
+        toast(moved ? `저장했습니다. ${moved}` : '저장했습니다.');
         if (thenReport) editForRecord({ ...rec, id });
       } catch (e) { fail(e); }
     };
@@ -1255,7 +1269,9 @@ async function saveEditor(thenPrint) {
     const id = await store.saveReport(S.cls.id, r, prev);
     r.id = id;
     E.prevIds = [...r.recordIds];
-    toast('저장했습니다.');
+    const d = reportDates(r);
+    const moved = d.length ? showMonthOf(d[0], d.at(-1), r.no) : '';
+    toast(moved ? `저장했습니다. ${moved}` : '저장했습니다.');
     if (thenPrint) printReports([r]);
     // PC 오른쪽 칸은 저장 후에도 그대로 두어 이어서 보거나 출력한다
     if (E.inline) drawEditor();

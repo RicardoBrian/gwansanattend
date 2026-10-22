@@ -4,7 +4,7 @@
  * 필드 이름과 허용값은 firestore.rules의 검증과 일치해야 한다.
  * 여기서 바꾸면 규칙도 같이 바꾼다.
  */
-import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=2610222350';
+import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=2610222355';
 
 /** 나이스 출결 구분: 4종류 × 4사유 = 16유형 */
 export const KINDS = ['결석', '지각', '조퇴', '결과'];
