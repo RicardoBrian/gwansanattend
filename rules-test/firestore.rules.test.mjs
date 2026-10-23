@@ -1,7 +1,7 @@
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'fs';
 import {
-  doc, setDoc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp,
+  doc, setDoc, getDoc, updateDoc, deleteDoc, addDoc, collection, getDocs, query, where, serverTimestamp,
 } from 'firebase/firestore';
 
 const testEnv = await initializeTestEnvironment({
@@ -105,6 +105,12 @@ await ok('담임 도장(PNG) 저장', assertSucceeds(updateDoc(doc(kim, 'classes
 await ok('도장이 PNG data URL이 아니면 거부', assertFails(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: 'https://evil.example/x.png', updatedAt: serverTimestamp() })));
 await ok('도장이 너무 크면 거부', assertFails(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: 'data:image/png;base64,' + 'A'.repeat(80000), updatedAt: serverTimestamp() })));
 await ok('도장 지우기', assertSucceeds(updateDoc(doc(kim, 'classes/2026-2-1'), { stamp: '', updatedAt: serverTimestamp() })));
+await ok('접속 기록: 본인 반에서 남기기', assertSucceeds(addDoc(collection(kim, 'logs'), { at: serverTimestamp(), email: 'kim@gmail.com', uid: 'kim-uid', cid: '2026-2-1', action: 'print', n: 3 })));
+await ok('접속 기록: 남의 이메일로 남기기 거부', assertFails(addDoc(collection(kim, 'logs'), { at: serverTimestamp(), email: 'lee@gmail.com', uid: 'kim-uid', cid: '', action: 'login' })));
+await ok('접속 기록: 남의 반으로 남기기 거부', assertFails(addDoc(collection(kim, 'logs'), { at: serverTimestamp(), email: 'kim@gmail.com', uid: 'kim-uid', cid: '2026-3-2', action: 'login' })));
+await ok('접속 기록: 내용 필드(학생 이름 등) 거부', assertFails(addDoc(collection(kim, 'logs'), { at: serverTimestamp(), email: 'kim@gmail.com', uid: 'kim-uid', cid: '', action: 'login', name: '홍길동' })));
+await ok('접속 기록: 담임은 못 읽음', assertFails(getDocs(collection(kim, 'logs'))));
+await ok('접속 기록: 관리자는 읽음', assertSucceeds(getDocs(collection(admin, 'logs'))));
 await ok('문서 ID와 번호가 다르면 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/6'), { no: 7, name: 'x', guardian: '', updatedAt: serverTimestamp() })));
 await ok('명렬표에 허용 안 된 필드(주민번호 등) 거부', assertFails(setDoc(doc(kim, 'classes/2026-2-1/students/8'), { no: 8, name: 'x', guardian: '', phone: '010', updatedAt: serverTimestamp() })));
 await ok('출결 기록 추가', assertSucceeds(setDoc(doc(kim, 'classes/2026-2-1/records/r1'), record())));

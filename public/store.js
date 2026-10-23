@@ -12,10 +12,10 @@
  *     records/{자동ID}              출결 기록
  *     reports/{자동ID}              결석신고서
  */
-import { db, auth } from './firebase-config.js?v=2610230132';
+import { db, auth } from './firebase-config.js?v=2610230226';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
-  query, where, onSnapshot, writeBatch, serverTimestamp,
+  query, where, orderBy, limit, onSnapshot, writeBatch, serverTimestamp,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut as fbSignOut, onAuthStateChanged,
@@ -85,6 +85,24 @@ export async function diagnoseAccess(cid) {
     if (c.data().ownerUid !== user.uid) return `이 반 담임으로 등록된 계정(${c.data().ownerEmail})과 지금 로그인한 계정(${email})이 다릅니다.`;
   }
   return '';
+}
+
+// ── 접속 기록 ────────────────────────────────────────
+// 누가·언제·어느 반에서·무엇을 했는지만 남긴다. 학생 이름·번호·사유 같은 내용은 넣지 않는다.
+// 기록은 규칙으로 고치거나 지울 수 없고 관리자만 읽는다. 기록 실패가 업무를 막지는 않는다.
+export async function logAction(action, cid = '', n = 0) {
+  try {
+    const u = auth.currentUser;
+    if (!u) return;
+    const d = { at: serverTimestamp(), email: (u.email || '').toLowerCase(), uid: u.uid, cid, action };
+    if (n) d.n = Math.min(500, Math.round(n));
+    await addDoc(collection(db, 'logs'), d);
+  } catch (e) { console.warn('접속 기록 실패', e?.code); }
+}
+
+export async function listLogs(max = 300) {
+  const snap = await getDocs(query(collection(db, 'logs'), orderBy('at', 'desc'), limit(max)));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
 export const signOut = () => { stamp.clear(); return fbSignOut(auth); };
@@ -182,13 +200,15 @@ const pick = (obj, keys) => Object.fromEntries(keys.map(k => [k, obj[k] ?? null]
 
 const STUDENT_FIELDS = ['no', 'name', 'koName', 'guardian'];
 
-export function saveStudent(cid, s) {
+export async function saveStudent(cid, s) {
   const data = { ...pick(s, STUDENT_FIELDS), koName: s.koName || '', guardian: s.guardian || '', updatedAt: serverTimestamp() };
-  return setDoc(doc(sub(cid, 'students'), String(s.no)), data);
+  await setDoc(doc(sub(cid, 'students'), String(s.no)), data);
+  logAction('student_save', cid);
 }
 
-export function deleteStudent(cid, no) {
-  return deleteDoc(doc(sub(cid, 'students'), String(no)));
+export async function deleteStudent(cid, no) {
+  await deleteDoc(doc(sub(cid, 'students'), String(no)));
+  logAction('student_delete', cid);
 }
 
 /** CSV로 명렬표 통째로 바꾸기. 새 명단에 없는 번호는 지운다(출결 기록은 이름이 따로 저장돼 있어 남는다). */
@@ -201,6 +221,7 @@ export async function replaceRoster(cid, students, current) {
     })),
   ];
   await runBatches(ops);
+  logAction('roster_replace', cid, students.length);
 }
 
 /** writeBatch는 500건 제한이 있어 나눠서 보낸다. */
@@ -238,9 +259,11 @@ export async function saveRecord(cid, r) {
   const data = recordData(r);
   if (r.id) {
     await setDoc(doc(sub(cid, 'records'), r.id), { ...data, createdAt: r.createdAt ?? serverTimestamp() });
+    logAction('record_save', cid);
     return r.id;
   }
   const ref = await addDoc(sub(cid, 'records'), { ...data, createdAt: serverTimestamp() });
+  logAction('record_save', cid);
   return ref.id;
 }
 
@@ -250,8 +273,9 @@ export function setRecordFlag(cid, id, patch) {
   return updateDoc(doc(sub(cid, 'records'), id), { ...ok, updatedAt: serverTimestamp() });
 }
 
-export function deleteRecord(cid, id) {
-  return deleteDoc(doc(sub(cid, 'records'), id));
+export async function deleteRecord(cid, id) {
+  await deleteDoc(doc(sub(cid, 'records'), id));
+  logAction('record_delete', cid);
 }
 
 // ── 신고서 ───────────────────────────────────────────
@@ -288,6 +312,7 @@ export async function saveReport(cid, r, prevRecordIds = []) {
   for (const id of now) b.update(doc(sub(cid, 'records'), id), { reportId: ref.id, updatedAt: serverTimestamp() });
   for (const id of prevRecordIds) if (!now.has(id)) b.update(doc(sub(cid, 'records'), id), { reportId: null, updatedAt: serverTimestamp() });
   await b.commit();
+  logAction('report_save', cid);
   return ref.id;
 }
 
@@ -295,6 +320,7 @@ export async function deleteReport(cid, r, existingRecordIds) {
   // 신고서 삭제가 먼저다. 연결된 기록의 표시 해제까지 한 묶음으로 하면, 기록 하나가 규칙에 걸려
   // 거절될 때 신고서까지 안 지워진다(모두 성공하거나 모두 실패하는 묶음이라서).
   await deleteDoc(doc(sub(cid, 'reports'), r.id));
+  logAction('report_delete', cid);
   const failed = [];
   for (const id of r.recordIds || []) {
     if (!existingRecordIds.has(id)) continue;
@@ -314,6 +340,7 @@ export async function wipeClass(cid) {
     snap.docs.forEach(d => ops.push(b => b.delete(d.ref)));
   }
   await runBatches(ops);
+  await logAction('class_wipe', cid);  // 반 등록을 지우면 규칙상 기록을 못 남기므로 그 전에
   await deleteDoc(doc(db, 'classes', cid));
 }
 

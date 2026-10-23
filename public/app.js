@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610230132';
-import * as store from './store.js?v=2610230132';
-import { renderSheet } from './form.js?v=2610230132';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230132';
+import { CONFIGURED } from './firebase-config.js?v=2610230226';
+import * as store from './store.js?v=2610230226';
+import { renderSheet } from './form.js?v=2610230226';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230226';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610230132';
+} from './dates.js?v=2610230226';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610230132';
+} from './model.js?v=2610230226';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -128,6 +128,9 @@ async function onAuth(user) {
     const acc = await store.checkAccess(user);
     S.admin = acc.admin;
     if (!acc.allowed) return renderRequest();
+    try {  // 접속 기록: 이 탭에서 처음 열 때 한 번
+      if (!window.sessionStorage.getItem(`gws.login.${user.uid}`)) { window.sessionStorage.setItem(`gws.login.${user.uid}`, '1'); store.logAction('login'); }
+    } catch { store.logAction('login'); }
     if (S.admin) {
       S.authUnsubs.push(store.watchRequests(list => {
         S.requests = list.sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
@@ -1308,6 +1311,7 @@ function fontNote() {
 
 async function printReports(list) {
   if (!list.length) return;
+  store.logAction('print', S.cls?.id || '', list.length);
   const area = $('printArea');
   // 첨부 줄나눔이 글자 폭을 재므로 글꼴이 준비된 뒤에 그린다
   try { await document.fonts.ready; } catch {}
@@ -1530,10 +1534,20 @@ function renderSettings(body) {
 
 // ── 관리 탭 (관리자만) ───────────────────────────────
 
+const LOG_LABEL = {
+  login: '접속', print: '신고서 출력', student_save: '학생 저장', student_delete: '학생 삭제', roster_replace: '명렬표 올리기',
+  record_save: '출결 기록 저장', record_delete: '출결 기록 삭제', report_save: '신고서 저장', report_delete: '신고서 삭제', class_wipe: '반 데이터 전체 삭제',
+};
+const logTime = ts => (ts?.toDate ? ts.toDate().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '');
+const logClass = cid => { const m = String(cid || '').match(/^\d{4}-(\d+)-(\d+)$/); return m ? `${m[1]}-${m[2]}` : ''; };
+
 async function renderAdmin(body) {
   body.innerHTML = '<div class="empty">불러오는 중…</div>';
-  let allowed, classes;
-  try { [allowed, classes] = await Promise.all([store.listAllowed(), store.listAllClasses()]); }
+  let allowed, classes, logs;
+  try {
+    [allowed, classes] = await Promise.all([store.listAllowed(), store.listAllClasses()]);
+    logs = await store.listLogs().catch(() => null);  // 규칙을 아직 게시하지 않았으면 null
+  }
   catch (e) { fail(e); body.innerHTML = '<div class="empty">불러오지 못했습니다.</div>'; return; }
   // 기다리는 사이 화면이 다시 그려졌으면(신청 목록 갱신 등) 이 결과는 버린다
   if (S.tab !== 'admin' || !body.isConnected) return;
@@ -1567,7 +1581,27 @@ async function renderAdmin(body) {
         ${classes.map(c => `<tr><td>${c.year} ${c.grade}-${c.cls}</td><td>${esc(c.teacherName)}</td><td class="hint">${esc(c.ownerEmail)}</td>
           <td style="text-align:right;"><button class="btn sm ghost" data-rel="${esc(c.id)}">등록 해제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
       </tbody></table>
+    </div>
+    <div class="card">
+      <h2>접속 기록 ${logs ? `(최근 ${logs.length}건)` : ''}</h2>
+      <p class="hint">누가 언제 어느 반에서 무엇을 했는지만 남습니다(학생 이름·사유 같은 내용은 기록하지 않습니다). 기록은 고치거나 지울 수 없고 관리자만 볼 수 있습니다.
+      오래된 기록은 Firebase 콘솔의 logs 컬렉션에서 보관·정리하세요.</p>
+      ${logs ? `<div style="max-height:360px;overflow:auto;margin-top:8px;"><table class="tbl"><thead><tr><th>시각</th><th>계정</th><th>반</th><th>행동</th></tr></thead><tbody>
+        ${logs.map(l => `<tr><td class="hint" style="white-space:nowrap;">${esc(logTime(l.at))}</td><td>${esc(l.email)}</td><td>${esc(logClass(l.cid))}</td><td>${esc(LOG_LABEL[l.action] || l.action)}${l.n ? ` ${l.n}` : ''}</td></tr>`).join('') || '<tr><td class="hint" colspan="4">아직 기록이 없습니다.</td></tr>'}
+      </tbody></table></div>
+      <button class="btn sm" id="logCsv" style="margin-top:10px;" ${logs.length ? '' : 'disabled'}>CSV로 저장</button>`
+      : '<p class="hint warn">기록을 불러오지 못했습니다. 최신 firestore.rules를 Firebase 콘솔에 게시했는지 확인하세요.</p>'}
     </div>`;
+
+  $('logCsv')?.addEventListener('click', () => {
+    const rows = [['시각', '계정', '반', '행동', '건수'], ...logs.map(l => [logTime(l.at), l.email, logClass(l.cid), LOG_LABEL[l.action] || l.action, l.n || ''])];
+    const csv = '﻿' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `접속기록_${today()}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
 
   body.querySelectorAll('[data-approve]').forEach(b => b.onclick = async () => {
     const rq = S.requests.find(x => x.uid === b.dataset.approve);
