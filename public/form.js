@@ -19,8 +19,8 @@
  *   dot — "출석인정 ․ 질병" 사이 점: 원본은 한컴돋움의 ․(U+2024). 한컴돋움이 없으면 굴림 ·
  *   선  — 0.36pt(사유명 밑줄·동그라미 0.48pt), 절취선은 지름 0.96pt 점을 1.2pt 간격으로
  */
-import { parts } from './dates.js?v=2610230102';
-import { circledKinds } from './model.js?v=2610230102';
+import { parts } from './dates.js?v=2610230132';
+import { circledKinds } from './model.js?v=2610230132';
 
 /** 고정 글자 [기준선 y, 크기, 글꼴, 글자, 글자마다 x] — 원본 빈 양식 그대로 */
 const STATIC = [
@@ -275,7 +275,8 @@ export function renderSheet(r, opts = {}) {
   // ── 성명 — "성·명·:·이름". 영어 이름이면 "영어이름(한글이름)". 너무 길면 이름 칸 안에 들어오게 글자를 줄인다
   out.push(flow(364.08, 217.08, 12.96, 'g', ['성', 1, '명', 1, ':']));
   {
-    const shown = r.koName && r.koName !== r.name ? `${r.name}(${r.koName})` : (r.name || '');
+    // 이름이 한글이면 괄호를 붙이지 않는다(영어 이름 학생만 "영어이름(한글이름)")
+    const shown = r.koName && r.koName !== r.name && !new RegExp(`[${HANGUL}]`).test(r.name || '') ? `${r.name}(${r.koName})` : (r.name || '');
     const avail = 534 - 413.86, size = fitNameSize(shown, 12.96, avail);
     // 9pt까지 줄여도 넘치면 글자 폭만 좁힌다
     const squeeze = nameEm(shown) * size > avail ? ` textLength="${num(avail)}" lengthAdjust="spacingAndGlyphs"` : '';

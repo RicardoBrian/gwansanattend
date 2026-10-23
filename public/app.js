@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610230102';
-import * as store from './store.js?v=2610230102';
-import { renderSheet } from './form.js?v=2610230102';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230102';
+import { CONFIGURED } from './firebase-config.js?v=2610230132';
+import * as store from './store.js?v=2610230132';
+import { renderSheet } from './form.js?v=2610230132';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230132';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610230102';
+} from './dates.js?v=2610230132';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610230102';
+} from './model.js?v=2610230132';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -458,7 +458,7 @@ function renderRecords(body) {
     .filter(r => inMonth(r.start, r.end))
     .filter(r => !S.filterNo || r.no === +S.filterNo)
     .filter(r => !S.todoOnly || (needsReport(r.cause) && !r.reportId) || !r.neis || (r.docs?.length && !r.docsIn))
-    .sort((a, b) => (b.start.localeCompare(a.start)) || (a.no - b.no));
+    .sort((a, b) => a.start.localeCompare(b.start) || a.no - b.no);
 
   const noRoster = S.loaded.students && !S.students.length;
   const groups = monthGroups();
@@ -744,7 +744,7 @@ function reportsInView() {
   return S.reports
     .filter(p => { const d = reportDates(p); return d.length ? inMonth(d[0], d.at(-1)) : inMonth(p.written, p.written); })
     .filter(p => !S.filterNo || p.no === +S.filterNo)
-    .sort((a, b) => (reportDates(b)[0] || b.written).localeCompare(reportDates(a)[0] || a.written) || a.no - b.no);
+    .sort((a, b) => (reportDates(a)[0] || a.written).localeCompare(reportDates(b)[0] || b.written) || a.no - b.no);
 }
 
 function renderRecordsTab(body) {

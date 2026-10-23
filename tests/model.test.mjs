@@ -162,6 +162,8 @@ test('신고서: 영어이름(한글이름)은 성명 자리에만, 서명란은
   assert.equal((html.match(/김빅토리야/g) || []).length, 1); // 서명란에는 영어이름만
   assert.equal(report.selfName, 'KIM VIKTORIYA');
   assert.ok(!html.includes('<image'));
+  const ko = renderSheet({ ...report, name: '홍길동', koName: '홍길동', grade: 2, cls: 1 }) + renderSheet({ ...report, name: '홍길동', koName: '다른', grade: 2, cls: 1 });
+  assert.ok(!ko.includes('홍길동(') && !ko.includes('(다른)'));
   const png = 'data:image/png;base64,iVBORw0KGgo=';
   assert.ok(renderSheet({ ...report, grade: 2, cls: 1 }, { stamp: png }).includes(`href="${png}"`));
   assert.ok(!renderSheet({ ...report, grade: 2, cls: 1 }, { stamp: 'javascript:alert(1)' }).includes('<image'));
