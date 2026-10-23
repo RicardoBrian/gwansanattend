@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610222355';
-import * as store from './store.js?v=2610222355';
-import { renderSheet } from './form.js?v=2610222355';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610222355';
+import { CONFIGURED } from './firebase-config.js?v=2610230102';
+import * as store from './store.js?v=2610230102';
+import { renderSheet } from './form.js?v=2610230102';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230102';
 import {
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610222355';
+} from './dates.js?v=2610230102';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610222355';
+} from './model.js?v=2610230102';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1421,20 +1421,25 @@ function editStudent(s) {
  */
 async function stampFromImage(file) {
   const bmp = await window.createImageBitmap(file).catch(() => { throw new Error('이미지 파일을 읽지 못했습니다.'); });
-  const k = Math.min(1, 160 / Math.max(bmp.width, bmp.height));
-  const cv = document.createElement('canvas');
-  cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
-  const g = cv.getContext('2d', { willReadFrequently: true });
-  g.drawImage(bmp, 0, 0, cv.width, cv.height);
-  const img = g.getImageData(0, 0, cv.width, cv.height), d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const lo = Math.min(d[i], d[i + 1], d[i + 2]);  // 흰색에 가까울수록 투명, 진할수록 불투명
-    d[i + 3] = Math.min(d[i + 3], lo > 225 ? 0 : lo < 170 ? 255 : Math.round(255 * (225 - lo) / 55));
+  // 사진은 잡티가 많아 PNG가 커진다. 색을 단순하게 만들고, 그래도 크면 더 작게 다시 만든다.
+  for (const max of [160, 128, 96, 64]) {
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+    const g = cv.getContext('2d', { willReadFrequently: true });
+    g.drawImage(bmp, 0, 0, cv.width, cv.height);
+    const img = g.getImageData(0, 0, cv.width, cv.height), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const lo = Math.min(d[i], d[i + 1], d[i + 2]);  // 흰색에 가까울수록 투명, 진할수록 불투명
+      const a = lo > 225 ? 0 : lo < 170 ? 255 : Math.round(255 * (225 - lo) / 55);
+      d[i + 3] = Math.min(d[i + 3], Math.round(a / 64) * 64 > 255 ? 255 : Math.round(a / 64) * 64);
+      for (let c = 0; c < 3; c++) d[i + c] = Math.min(255, Math.round(d[i + c] / 48) * 48);  // 색 단계를 줄여 압축이 잘 되게
+    }
+    g.putImageData(img, 0, 0);
+    const url = cv.toDataURL('image/png');
+    if (url.length <= 60000) return url;
   }
-  g.putImageData(img, 0, 0);
-  const url = cv.toDataURL('image/png');
-  if (url.length > 79000) throw new Error('도장 그림이 너무 큽니다. 더 단순한 사진을 써 주세요.');
-  return url;
+  throw new Error('도장 그림이 너무 복잡합니다. 흰 종이에 또렷하게 찍은 도장 사진을 써 주세요.');
 }
 
 function renderSettings(body) {
