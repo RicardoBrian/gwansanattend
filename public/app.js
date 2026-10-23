@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2610230226';
-import * as store from './store.js?v=2610230226';
-import { renderSheet } from './form.js?v=2610230226';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230226';
-import {
+import { CONFIGURED } from './firebase-config.js?v=2610230238';
+import * as store from './store.js?v=2610230238';
+import { renderSheet } from './form.js?v=2610230238';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2610230238';
+import { nextSchoolDay,
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2610230226';
+} from './dates.js?v=2610230238';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2610230226';
+} from './model.js?v=2610230238';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -974,12 +974,31 @@ function closeEditor() {
   E = null;
 }
 
+/** 작성일 = 마지막 출결일의 다음 수업일, 확인서 날짜 = 그다음 수업일. 출결일이 없으면 오늘(주말·공휴일이면 다음 수업일) */
+function autoDates(r) {
+  const last = reportDates(r).at(-1);
+  const written = last ? nextSchoolDay(last, offDays()) : (offReason(today(), offDays()) ? nextSchoolDay(today(), offDays()) : today());
+  return { written, confirmedOn: nextSchoolDay(written, offDays()) };
+}
+
+/** 출결일을 고쳤을 때, 직접 손대지 않은 작성일·확인서 날짜를 다시 계산해 입력칸에 반영한다 */
+function syncAutoDates() {
+  const r = E.r, auto = autoDates(r);
+  if (!E.writtenManual) r.written = auto.written;
+  if (!E.confirmManual) r.confirmedOn = E.writtenManual ? nextSchoolDay(r.written, offDays()) : auto.confirmedOn;
+  const w = E.root.querySelector('[data-f="written"]'), c = E.root.querySelector('[data-f="confirmedOn"]');
+  if (w) w.value = r.written;
+  if (c) c.value = r.confirmedOn;
+}
+
 function openEditor(rep, warnings = [], { focus = null } = {}) {
   // createdAt(Firestore Timestamp)은 structuredClone하면 일반 객체가 돼 규칙에 걸린다 — 따로 옮긴다.
   const { createdAt, updatedAt: _updatedAt, ...rest } = rep;
   const r = structuredClone({ ...emptyReport(), ...rest, items: { ...emptyReport().items, ...(rest.items || {}) } });
   if (createdAt) r.createdAt = createdAt;
   const a = r.items.absent;
+  const auto = autoDates(r);
+  if (!rep.id && !(rep.recordIds || []).length) Object.assign(r, auto);  // 기록 없이 만드는 빈 신고서는 오늘(수업일) 기준
   const inline = WIDE.matches && S.tab === 'records';
   if (E && !E.inline) closeEditor();
   let root;
@@ -995,6 +1014,9 @@ function openEditor(rep, warnings = [], { focus = null } = {}) {
     r, warnings, root, inline, focus,
     prevIds: rep.id ? [...(rep.recordIds || [])] : [],
     absManual: !!(a && a.days !== countSchoolDays(a.start, a.end, offDays())),
+    // 이미 저장된 신고서에서 자동 값과 다르면 직접 고친 것으로 보고 건드리지 않는다
+    writtenManual: !!rep.id && r.written !== auto.written,
+    confirmManual: !!rep.id && r.confirmedOn !== nextSchoolDay(r.written || auto.written, offDays()),
   };
   drawEditor();
 }
@@ -1040,7 +1062,7 @@ function drawEditor() {
           <div><label class="mini">작성일</label><input class="inp" type="date" data-f="written" value="${esc(r.written)}"></div>
           <div><label class="mini">본인</label><input class="inp" data-f="selfName" maxlength="40" value="${esc(r.selfName)}"></div>
           <div><label class="mini">보호자</label><input class="inp" data-f="guardianName" maxlength="40" placeholder="비우면 빈칸" value="${esc(r.guardianName)}"></div>
-        </div></section>
+        </div><p class="hint warn" id="eWNote" style="margin:6px 0 0;"></p></section>
 
       <section class="zone-sec" data-zone="confirm"><div class="zone-title">확인서 · 1. 확인방법</div>
         <div class="seg" id="eMethod">${CONFIRM_METHODS.map(k => `<button data-v="${k}" class="${r.method === k ? 'on' : ''}">${k}</button>`).join('')}</div>
@@ -1057,7 +1079,7 @@ function drawEditor() {
         <div class="grid2">
           <div><label class="mini">확인서 날짜</label><input class="inp" type="date" data-f="confirmedOn" value="${esc(r.confirmedOn)}"></div>
           <div><label class="mini">담임 이름</label><input class="inp" data-f="teacherName" maxlength="20" value="${esc(r.teacherName)}"></div>
-        </div></section>
+        </div><p class="hint warn" id="eCNote" style="margin:6px 0 0;"></p></section>
       <div class="actions">
         ${r.id ? '<button class="btn danger left" id="eDel">삭제</button>' : ''}
         <button class="btn" id="eCancel">닫기</button>
@@ -1113,13 +1135,15 @@ function bindEditor() {
     if (!cb.checked) r.items[key] = null;
     else if (key === 'absent') { r.items.absent = { start: base, end: base, days: countSchoolDays(base, base, offDays()) }; E.absManual = false; }
     else r.items[key] = { date: base, period: '' };
+    if (!E.writtenManual || !E.confirmManual) { const au = autoDates(r); if (!E.writtenManual) r.written = au.written; if (!E.confirmManual) r.confirmedOn = E.writtenManual ? nextSchoolDay(r.written, offDays()) : au.confirmedOn; }
     drawEditor();
   });
 
   ed.querySelectorAll('[data-f]').forEach(inp => inp.addEventListener('input', () => {
     const f = inp.dataset.f;
     const oldStart = r.items.absent?.start;
-    setPath(r, f, inp.value);
+    // 기간 칸(late/early/result/absent.*)은 r.items 안에 있다
+    setPath(/^(late|early|result|absent)\./.test(f) ? r.items : r, f, inp.value);
     if (f === 'absent.start' && r.items.absent) {
       const end = q('[data-f="absent.end"]');
       if (!r.items.absent.end || r.items.absent.end < inp.value || r.items.absent.end === oldStart) {
@@ -1129,6 +1153,9 @@ function bindEditor() {
       end.min = inp.value;
     }
     if (f === 'absent.days') E.absManual = true;
+    if (f === 'written') { E.writtenManual = true; syncAutoDates(); }
+    else if (f === 'confirmedOn') E.confirmManual = true;
+    else if (/^(absent\.(start|end)|(late|early|result)\.date)$/.test(f)) syncAutoDates();
     if ((f === 'absent.start' || f === 'absent.end') && !E.absManual) {
       r.items.absent.days = countSchoolDays(r.items.absent.start, r.items.absent.end, offDays());
       q('[data-f="absent.days"]').value = r.items.absent.days;
@@ -1189,6 +1216,11 @@ function updatePreview() {
       ? (ab.end < ab.start ? '결석 종료일이 시작일보다 빠릅니다.'
         : `결석 일수: 주말·공휴일 빼면 ${countSchoolDays(ab.start, ab.end, offDays())}일${E.absManual ? ' (직접 입력한 값을 씁니다)' : ''}`)
       : '';
+  }
+  for (const [id, label, d] of [['eWNote', '작성일', E.r.written], ['eCNote', '확인서 날짜', E.r.confirmedOn]]) {
+    const el = E.root.querySelector(`#${id}`);
+    const why = el && isDateStr(d) && offReason(d, offDays());
+    if (el) el.textContent = why ? `※ ${label} ${shortLabel(d)}은(는) ${why}입니다. 날짜를 확인하세요.` : '';
   }
   const an = $('eAttachNote');
   if (an) {
