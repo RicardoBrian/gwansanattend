@@ -237,3 +237,39 @@ body.split-on .row.rec .flags { grid-column: 2; justify-content: flex-start; }
 .editor.inline .period-row.absent { grid-template-columns: 64px 1fr 1fr; }
 .editor.inline .period-row.absent [data-f="absent.days"] { grid-column: 2; }
 .editor.inline .period-row .inp { padding: 8px 6px; font-size: 0.85rem; }
+
+/* ── 모바일·해상도별 보정 ── */
+/* 날짜·선택 입력은 기기마다 기본 폭이 커서 칸 밖으로 삐져나온다 — 칸 안에서만 줄어들게 */
+.grid2 > *, .grid3 > *, .inline > *, .period-row > *, .toolbar > * { min-width: 0; }
+.inp[type=date], input[type=date].inp, input[type=time].inp { min-width: 0; max-width: 100%; width: 100%; -webkit-appearance: none; appearance: none; }
+.toolbar input[type=date].inp { width: auto; }
+@media (max-width: 420px) {
+  .wrap { padding: 14px 12px 80px; }
+  .card { padding: 14px; border-radius: 18px; }
+  .grid3 { grid-template-columns: 1fr; }
+  .modal-card { padding: 18px 14px; }
+  .monthnav .label { min-width: 88px; }
+}
+/* 손가락으로 누르는 화면(폰·태블릿): 누를 곳을 44px 이상으로 */
+@media (pointer: coarse) {
+  .btn, .tab, .class-pill, .chip, .linkish { min-height: 44px; }
+  .btn.sm { min-height: 40px; padding-left: 14px; padding-right: 14px; }
+  .inp, select.inp { min-height: 44px; }
+  input[type=checkbox] { width: 22px; height: 22px; }
+  .row { min-height: 52px; }
+  .dark-toggle { position: relative; }
+  .dark-toggle::before { content: ''; position: absolute; inset: -10px -6px; }
+  /* iOS는 16px 미만 입력칸을 누르면 화면을 확대해 버린다 */
+  input.inp, select.inp, textarea.inp { font-size: 16px; }
+}
+/* 좁은 화면의 신고서 편집기: 종류 이름 한 줄, 날짜 칸은 그 아랫줄에 넓게 */
+@media (max-width: 520px) {
+  .editor:not(.inline) .period-row { grid-template-columns: minmax(0, 1fr) 96px; row-gap: 6px; margin-bottom: 12px; }
+  .editor:not(.inline) .period-row .check { grid-column: 1 / -1; }
+  .editor:not(.inline) .period-row.absent { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .editor:not(.inline) .period-row.absent [data-f="absent.days"] { grid-column: 1 / -1; }
+  .editor:not(.inline) .period-row .inp { font-size: 16px; padding: 10px 12px; }
+}
+@media (max-width: 360px) {
+  .editor:not(.inline) .period-row.absent { grid-template-columns: minmax(0, 1fr); }
+}
