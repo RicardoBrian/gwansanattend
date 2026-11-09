@@ -4,15 +4,21 @@
  * firestore.rules 와 정확히 맞물려야 한다 — 여기서 보내는 필드 목록이
  * 규칙의 hasOnly 목록과 다르면 저장이 거부된다.
  *
- *   admins/{email}                 관리자 (콘솔에서만 만든다)
- *   requests/{uid}                 승인 신청 (학년·반·이름) — 관리자가 승인하면 지워진다
- *   allowed/{email}                사용 허용된 선생님 계정 (승인 또는 관리자 직접 추가)
- *   classes/{연도-학년-반}          반. 처음 등록한 선생님이 담임(ownerUid)이 된다
- *     students/{번호}               명렬표
- *     records/{자동ID}              출결 기록
- *     reports/{자동ID}              결석신고서
+ * 업무용 통합 프로젝트 gwansan-work. 출결 데이터는 apps/attend 아래, 명렬표는 세 앱 공용.
+ *
+ *   admins/{email}                          관리자 (세 앱 공용, 콘솔에서만 만든다)
+ *   years/{연도}/students/{연도-학년-반-번호}   명렬표 (세 앱 공용 — 학생 관리 사이트·봉사 앱도 쓴다)
+ *   apps/attend/requests/{uid}              승인 신청 (학년·반·이름) — 관리자가 승인하면 지워진다
+ *   apps/attend/allowed/{email}             사용 허용된 선생님 계정 (승인 또는 관리자 직접 추가)
+ *   apps/attend/classes/{연도-학년-반}        반. 담임은 ownerEmail(이메일로 확인 — 프로젝트가 바뀌어도 이어지게)
+ *     guardians/{연도-학년-반-번호}           보호자명 (그 반 담임만)
+ *     records/{자동ID}                       출결 기록
+ *     reports/{자동ID}                       결석신고서
+ *   apps/attend/logs/{자동ID}               접속 기록
  */
 import { db, auth } from './firebase-config.js?v=2611030222';
+
+const A = 'apps/attend';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
   query, where, orderBy, limit, onSnapshot, writeBatch, serverTimestamp,
@@ -74,15 +80,15 @@ export async function diagnoseAccess(cid) {
   if (!user) return '로그인이 풀렸습니다. 다시 로그인하세요.';
   const email = (user.email || '').toLowerCase();
   const [allowed, admin] = await Promise.all([
-    getDoc(doc(db, 'allowed', email)).catch(() => null),
+    getDoc(doc(db, `${A}/allowed`, email)).catch(() => null),
     getDoc(doc(db, 'admins', email)).catch(() => null),
   ]);
   if (!allowed?.exists() && !admin?.exists()) return `${email} 계정이 "사용 허용 계정"에 없습니다. 관리자에게 알려 주세요.`;
   if (cid) {
-    const c = await getDoc(doc(db, 'classes', cid)).catch(() => null);
+    const c = await getDoc(doc(db, `${A}/classes`, cid)).catch(() => null);
     if (!c) return '이 반 정보를 읽을 수 없습니다. 이 반의 담임으로 등록된 계정과 지금 로그인한 계정(' + email + ')이 같은지 관리자에게 확인하세요.';
     if (!c.exists()) return '이 반이 등록 해제되었습니다. 관리자에게 알려 주세요.';
-    if (c.data().ownerUid !== user.uid) return `이 반 담임으로 등록된 계정(${c.data().ownerEmail})과 지금 로그인한 계정(${email})이 다릅니다.`;
+    if ((c.data().ownerEmail || '').toLowerCase() !== email) return `이 반 담임으로 등록된 계정(${c.data().ownerEmail})과 지금 로그인한 계정(${email})이 다릅니다.`;
   }
   return '';
 }
@@ -96,12 +102,12 @@ export async function logAction(action, cid = '', n = 0) {
     if (!u) return;
     const d = { at: serverTimestamp(), email: (u.email || '').toLowerCase(), uid: u.uid, cid, action };
     if (n) d.n = Math.min(500, Math.round(n));
-    await addDoc(collection(db, 'logs'), d);
+    await addDoc(collection(db, `${A}/logs`), d);
   } catch (e) { console.warn('접속 기록 실패', e?.code); }
 }
 
 export async function listLogs(max = 300) {
-  const snap = await getDocs(query(collection(db, 'logs'), orderBy('at', 'desc'), limit(max)));
+  const snap = await getDocs(query(collection(db, `${A}/logs`), orderBy('at', 'desc'), limit(max)));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -113,7 +119,7 @@ const emailOf = user => (user.email || '').toLowerCase();
 export async function checkAccess(user) {
   const e = emailOf(user);
   const [a, b] = await Promise.all([
-    getDoc(doc(db, 'allowed', e)).catch(() => null),
+    getDoc(doc(db, `${A}/allowed`, e)).catch(() => null),
     getDoc(doc(db, 'admins', e)).catch(() => null),
   ]);
   const admin = !!b?.exists();
@@ -123,20 +129,20 @@ export async function checkAccess(user) {
 // ── 승인 신청 ─────────────────────────────────────────
 
 export function watchMyRequest(cb, onErr) {
-  return onSnapshot(doc(db, 'requests', auth.currentUser.uid), s => cb(s.exists() ? s.data() : null), onErr);
+  return onSnapshot(doc(db, `${A}/requests`, auth.currentUser.uid), s => cb(s.exists() ? s.data() : null), onErr);
 }
 
 export function submitRequest({ year, grade, cls, name }) {
   const user = auth.currentUser;
-  return setDoc(doc(db, 'requests', user.uid), {
+  return setDoc(doc(db, `${A}/requests`, user.uid), {
     email: emailOf(user), name, year, grade, cls, createdAt: serverTimestamp(),
   });
 }
 
-export const cancelRequest = () => deleteDoc(doc(db, 'requests', auth.currentUser.uid));
+export const cancelRequest = () => deleteDoc(doc(db, `${A}/requests`, auth.currentUser.uid));
 
 export function watchRequests(cb, onErr) {
-  return onSnapshot(collection(db, 'requests'), s => cb(s.docs.map(d => ({ uid: d.id, ...d.data() }))), onErr);
+  return onSnapshot(collection(db, `${A}/requests`), s => cb(s.docs.map(d => ({ uid: d.id, ...d.data() }))), onErr);
 }
 
 /**
@@ -145,37 +151,37 @@ export function watchRequests(cb, onErr) {
  */
 export async function approveRequest(rq) {
   const id = classIdOf(rq.year, rq.grade, rq.cls);
-  const [cls, allowed] = await Promise.all([getDoc(doc(db, 'classes', id)), getDoc(doc(db, 'allowed', rq.email))]);
+  const [cls, allowed] = await Promise.all([getDoc(doc(db, `${A}/classes`, id)), getDoc(doc(db, `${A}/allowed`, rq.email))]);
   if (cls.exists()) throw new Error(`${rq.grade}학년 ${rq.cls}반은 이미 ${cls.data().teacherName || cls.data().ownerEmail} 선생님이 등록했습니다. 먼저 등록 해제하거나 신청을 거절하세요.`);
   const b = writeBatch(db);
   if (!allowed.exists()) {
-    b.set(doc(db, 'allowed', rq.email), { email: rq.email, note: `${rq.grade}-${rq.cls} ${rq.name}`.slice(0, 40), addedAt: serverTimestamp() });
+    b.set(doc(db, `${A}/allowed`, rq.email), { email: rq.email, note: `${rq.grade}-${rq.cls} ${rq.name}`.slice(0, 40), addedAt: serverTimestamp() });
   }
-  b.set(doc(db, 'classes', id), {
+  b.set(doc(db, `${A}/classes`, id), {
     year: rq.year, grade: rq.grade, cls: rq.cls,
     ownerUid: rq.uid, ownerEmail: rq.email, teacherName: rq.name, offDays: [],
     createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
   });
-  b.delete(doc(db, 'requests', rq.uid));
+  b.delete(doc(db, `${A}/requests`, rq.uid));
   await b.commit();
 }
 
-export const rejectRequest = uid => deleteDoc(doc(db, 'requests', uid));
+export const rejectRequest = uid => deleteDoc(doc(db, `${A}/requests`, uid));
 
 // ── 반 ───────────────────────────────────────────────
 
 export const classIdOf = (year, grade, cls) => `${year}-${grade}-${cls}`;
 
 export async function myClasses() {
-  const uid = auth.currentUser.uid;
-  const snap = await getDocs(query(collection(db, 'classes'), where('ownerUid', '==', uid)));
+  const email = emailOf(auth.currentUser);
+  const snap = await getDocs(query(collection(db, `${A}/classes`), where('ownerEmail', '==', email)));
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => b.year - a.year || a.grade - b.grade || a.cls - b.cls);
 }
 
 export function watchClass(cid, cb, onErr) {
-  return onSnapshot(doc(db, 'classes', cid), s => cb(s.exists() ? { id: s.id, ...s.data() } : null), onErr);
+  return onSnapshot(doc(db, `${A}/classes`, cid), s => cb(s.exists() ? { id: s.id, ...s.data() } : null), onErr);
 }
 
 export function updateClass(cid, patch) {
@@ -183,42 +189,71 @@ export function updateClass(cid, patch) {
   if ('teacherName' in patch) allowed.teacherName = patch.teacherName;
   if ('offDays' in patch) allowed.offDays = patch.offDays;
   if ('stamp' in patch) allowed.stamp = patch.stamp;  // 담임 도장 그림(작은 PNG data URL), 빈 문자열이면 삭제
-  return updateDoc(doc(db, 'classes', cid), { ...allowed, updatedAt: serverTimestamp() });
+  return updateDoc(doc(db, `${A}/classes`, cid), { ...allowed, updatedAt: serverTimestamp() });
 }
 
 // ── 반 아래 컬렉션 공통 ───────────────────────────────
 
-const sub = (cid, name) => collection(db, 'classes', cid, name);
+const sub = (cid, name) => collection(db, `${A}/classes`, cid, name);
 
 export function watchSub(cid, name, cb, onErr) {
+  if (name === 'students') return watchStudents(cid, cb, onErr);
   return onSnapshot(sub(cid, name), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
 }
 
 const pick = (obj, keys) => Object.fromEntries(keys.map(k => [k, obj[k] ?? null]));
 
 // ── 명렬표 ───────────────────────────────────────────
+// 이름·번호는 공용 명렬표(years/{연도}/students), 보호자명은 반 아래 guardians 에 둔다.
+// 화면에는 예전과 같은 모양 { id: 번호, no, name, koName, guardian } 으로 넘긴다.
 
-const STUDENT_FIELDS = ['no', 'name', 'koName', 'guardian'];
+const parseCid = cid => { const [year, grade, cls] = cid.split('-').map(Number); return { year, grade, cls }; };
+const sid = (cid, no) => `${cid}-${no}`;  // 학생 ID = 연도-학년-반-번호
+const rosterDoc = (cid, no) => doc(db, `years/${parseCid(cid).year}/students`, sid(cid, no));
+const guardianDoc = (cid, no) => doc(sub(cid, 'guardians'), sid(cid, no));
+
+function watchStudents(cid, cb, onErr) {
+  const { year, grade, cls } = parseCid(cid);
+  let roster = null, guardians = null;
+  const emit = () => {
+    if (!roster || !guardians) return;
+    cb(roster.map(s => ({
+      id: String(s.number), no: s.number, name: s.name, koName: s.koreanName || '',
+      guardian: guardians.get(s.number) || '', updatedAt: s.updatedAt,
+    })));
+  };
+  const u1 = onSnapshot(query(collection(db, `years/${year}/students`), where('grade', '==', grade), where('klass', '==', cls)),
+    s => { roster = s.docs.map(d => d.data()); emit(); }, onErr);
+  const u2 = onSnapshot(sub(cid, 'guardians'),
+    s => { guardians = new Map(s.docs.map(d => [d.data().number, d.data().guardian || ''])); emit(); }, onErr);
+  return () => { u1(); u2(); };
+}
+
+function studentOps(cid, s) {
+  const { grade, cls } = parseCid(cid);
+  return [
+    b => b.set(rosterDoc(cid, s.no), { grade, klass: cls, number: s.no, name: s.name, koreanName: s.koName || '', updatedAt: serverTimestamp() }, { merge: true }),
+    b => b.set(guardianDoc(cid, s.no), { number: s.no, guardian: s.guardian || '', updatedAt: serverTimestamp() }),
+  ];
+}
+const deleteOps = (cid, no) => [b => b.delete(rosterDoc(cid, no)), b => b.delete(guardianDoc(cid, no))];
 
 export async function saveStudent(cid, s) {
-  const data = { ...pick(s, STUDENT_FIELDS), koName: s.koName || '', guardian: s.guardian || '', updatedAt: serverTimestamp() };
-  await setDoc(doc(sub(cid, 'students'), String(s.no)), data);
+  await runBatches(studentOps(cid, s));
   logAction('student_save', cid);
 }
 
 export async function deleteStudent(cid, no) {
-  await deleteDoc(doc(sub(cid, 'students'), String(no)));
+  await runBatches(deleteOps(cid, no));
   logAction('student_delete', cid);
 }
 
 /** CSV로 명렬표 통째로 바꾸기. 새 명단에 없는 번호는 지운다(출결 기록은 이름이 따로 저장돼 있어 남는다). */
 export async function replaceRoster(cid, students, current) {
-  const keep = new Set(students.map(s => String(s.no)));
+  const keep = new Set(students.map(s => s.no));
   const ops = [
-    ...current.filter(s => !keep.has(String(s.no))).map(s => b => b.delete(doc(sub(cid, 'students'), String(s.no)))),
-    ...students.map(s => b => b.set(doc(sub(cid, 'students'), String(s.no)), {
-      no: s.no, name: s.name, koName: s.koName || '', guardian: s.guardian || '', updatedAt: serverTimestamp(),
-    })),
+    ...current.filter(s => !keep.has(s.no)).flatMap(s => deleteOps(cid, s.no)),
+    ...students.flatMap(s => studentOps(cid, s)),
   ];
   await runBatches(ops);
   logAction('roster_replace', cid, students.length);
@@ -332,29 +367,30 @@ export async function deleteReport(cid, r, existingRecordIds) {
 
 // ── 학년 말 정리 ──────────────────────────────────────
 
-/** 반의 모든 데이터(명렬표·기록·신고서)와 반 등록까지 지운다. 되돌릴 수 없다. */
+/** 반의 출결 데이터(보호자·기록·신고서)와 반 등록까지 지운다. 되돌릴 수 없다.
+ *  명렬표(이름·번호)는 세 앱 공용이라 지우지 않는다 — 학생 관리 사이트에서 관리한다. */
 export async function wipeClass(cid) {
   const ops = [];
-  for (const name of ['students', 'records', 'reports']) {
+  for (const name of ['guardians', 'records', 'reports']) {
     const snap = await getDocs(sub(cid, name));
     snap.docs.forEach(d => ops.push(b => b.delete(d.ref)));
   }
   await runBatches(ops);
   await logAction('class_wipe', cid);  // 반 등록을 지우면 규칙상 기록을 못 남기므로 그 전에
-  await deleteDoc(doc(db, 'classes', cid));
+  await deleteDoc(doc(db, `${A}/classes`, cid));
 }
 
 // ── 관리자 ───────────────────────────────────────────
 
 export async function listAllowed() {
-  const snap = await getDocs(collection(db, 'allowed'));
+  const snap = await getDocs(collection(db, `${A}/allowed`));
   return snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export const removeAllowed = email => deleteDoc(doc(db, 'allowed', email));
+export const removeAllowed = email => deleteDoc(doc(db, `${A}/allowed`, email));
 
 export async function listAllClasses() {
-  const snap = await getDocs(collection(db, 'classes'));
+  const snap = await getDocs(collection(db, `${A}/classes`));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => b.year - a.year || a.grade - b.grade || a.cls - b.cls);
 }
@@ -363,4 +399,4 @@ export async function listAllClasses() {
  * 반 등록 해제. 반 문서만 지우고 명렬표·기록·신고서는 남긴다
  * — 담임이 바뀐 경우 새 담임이 같은 반을 등록하면 그대로 이어받는다.
  */
-export const releaseClass = cid => deleteDoc(doc(db, 'classes', cid));
+export const releaseClass = cid => deleteDoc(doc(db, `${A}/classes`, cid));

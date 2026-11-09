@@ -9,19 +9,24 @@
 - `public/app.js` 화면·흐름, `store.js` Firestore 읽기·쓰기, `model.js` 출결 규칙, `dates.js` 수업일·공휴일 계산, `csv.js` 명렬표 CSV(CP949 포함), `form.js` 신고서 SVG(원본 PDF 좌표 그대로 — 좌표·간격은 근거 없이 바꾸지 않는다).
 - `public/firebase-config.js` Firebase 설정, `theme.css` 공통 디자인 사본.
 
-## DB — Firebase `gwsattend`
-- 컬렉션: `students`, `classes`, `records`, `reports`, `requests`, `allowed`, `admins`, `logs`.
-- 규칙: `firestore.rules`. **자동 배포 안 됨** — 테스트 통과 후 Firebase 콘솔 → Firestore → 규칙에 붙여넣어 게시(또는 `firebase deploy --only firestore:rules --project gwsattend`). 고쳤으면 사용자에게 꼭 알린다.
+## DB — Firebase `gwansan-work` (업무용 통합 프로젝트, 2026-11-09 전환)
+- 출결 데이터: `apps/attend/` 아래 — `allowed/{이메일}`, `requests/{uid}`, `logs`, `classes/{연도-학년-반}`(+ `guardians`, `records`, `reports`).
+- 명렬표(이름·번호): 세 앱 공용 `years/{연도}/students/{연도-학년-반-번호}` — 학생 관리 사이트(students.kakainfo.com)·봉사 앱도 쓴다. 출결 화면에는 `store.js` 가 예전 모양 `{no, name, koName, guardian}` 으로 바꿔 넘긴다.
+- 보호자명: 반 아래 `guardians/{학생ID}` — **그 반 담임만** 읽는다(관리자도 못 봄).
+- 담임 확인은 `ownerEmail`(이메일). uid 는 프로젝트마다 달라서 쓰지 않는다.
+- 관리자: 공용 `admins/{이메일}`.
+- 규칙: 세 앱 공용 파일 하나 — 원본은 GWVS 레포 `firestore.rules`(사용자 컴퓨터 `~/code/workapps-merge/firestore.rules`, 시험 `rules-test`). 이 레포의 `firestore.rules`·`rules-test/` 는 예전 프로젝트(gwsattend)용으로 남아 있다.
+- 예전 프로젝트 `gwsattend` 는 백업으로 남겨 두었다(지우지 않음). 백업: `~/secrets/backup/2026-11-09-출결-1225/`.
 
 ## 배포
 - Cloudflare Pages(`gwansanattend`), Build command 비움, output `public`.
-- 주소: `attend.kakainfo.com` (기본 `gwansanattend.pages.dev`).
+- 주소: `attend.kakainfo.com` (기본 `gwansanattend.pages.dev`). 새 주소는 `gwansan-work` → Authentication → 승인된 도메인에 추가.
 - **배포할 때마다 `node bump-version.mjs` 실행 후 커밋**(파일 주소 `?v=` 갱신 — 아이폰 Safari 캐시 문제 방지).
 
 ## 테스트
 - 단위: `node --test tests/*.test.mjs` (csv·dates·model)
-- 규칙: `cd rules-test && npm install && npm test` (Firestore 에뮬레이터, Java 필요)
-- 로컬 확인: `cd public && python3 -m http.server 8000`
+- 규칙: 공용 규칙 시험 `~/code/workapps-merge/rules-test` 에서 `node attend.rules.test.mjs` (에뮬레이터에 데이터 사본 필요)
+- 로컬 확인: `cd public && python3 -m http.server 8000` — localhost 는 항상 에뮬레이터(demo-gwansan-work)에 붙는다
 
 ## 작업 원칙
 - 고치기 전에 **실제 오류 메시지를 먼저 확보**한다. 메시지 없이 추측으로 고치지 않는다.
