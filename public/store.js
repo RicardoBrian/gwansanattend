@@ -16,7 +16,7 @@
  *     reports/{자동ID}                       결석신고서
  *   apps/attend/logs/{자동ID}               접속 기록
  */
-import { db, auth } from './firebase-config.js?v=2611090332';
+import { db, auth } from './firebase-config.js?v=2611100014';
 
 const A = 'apps/attend';
 import {
@@ -50,6 +50,12 @@ export function watchAuth(cb) {
         await fbSignOut(auth);
         return;  // 로그아웃되면 이 리스너가 user=null로 다시 불린다
       }
+      // 교사 개인정보 처리 안내(공용 privacyAcks) — 이 판을 확인한 적 없으면 한 번 띄운다
+      globalThis.PrivacyNotice?.check({
+        email: user.email, app: 'attend',
+        read: e => getDoc(doc(db, 'privacyAcks', e)).then(s => (s.exists() ? s.data() : null)),
+        write: (e, d) => setDoc(doc(db, 'privacyAcks', e), { ...d, at: serverTimestamp() }),
+      });
     }
     cb(user);
   });
