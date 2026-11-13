@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2611100014';
-import * as store from './store.js?v=2611100014';
-import { renderSheet } from './form.js?v=2611100014';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2611100014';
+import { CONFIGURED } from './firebase-config.js?v=2611130038';
+import * as store from './store.js?v=2611130038';
+import { renderSheet } from './form.js?v=2611130038';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2611130038';
 import { nextSchoolDay,
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2611100014';
+} from './dates.js?v=2611130038';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
-  needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports,
-} from './model.js?v=2611100014';
+  needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports, reportPatchFromRecords,
+} from './model.js?v=2611130038';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -30,6 +30,7 @@ const S = {
   tab: 'records',
   month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
   filterNo: '', todoOnly: false,
+  recSel: new Set(),    // 신고서로 묶을 기록 선택
   printSel: new Set(),  // 신고서 선택(출력)
   focus: null,          // PC: 왼쪽에서 고른 출결 기록 — 오른쪽에서 그 신고서를 고친다
   unsubs: [],
@@ -314,7 +315,7 @@ function enterClass(c, tab) {
   S.cls = c;
   S.students = []; S.records = []; S.reports = [];
   S.loaded = { students: false, records: false, reports: false };
-  S.printSel.clear();
+  S.printSel.clear(); S.recSel.clear();
   if (tab) S.tab = tab;
   try { localStorage.setItem(CLASS_KEY, c.id); } catch {}
   $('classPill').textContent = `${c.grade}학년 ${c.cls}반`;
@@ -479,6 +480,11 @@ function renderRecords(body) {
       <span><b>신고서 ${groups.length}장</b>을 아직 만들지 않았습니다 <span class="hint">(${S.month === 'all' ? '전체 기간' : '이 달'})</span></span>
       <button class="btn sm accent" id="btnBulk"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>한 번에 만들기</button>
     </div>` : ''}
+    ${S.recSel.size ? `<div class="notice">
+      <span><b>${S.recSel.size}건</b> 선택했습니다 <span class="hint">(같은 학생의 기록만 한 장으로 묶입니다)</span></span>
+      <span><button class="btn sm ghost" id="btnSelClear">선택 해제</button>
+      <button class="btn sm accent" id="btnSelMake"><svg width="14" height="14" style="vertical-align:-2px;margin-right:3px;"><use href="#ic-doc"/></svg>선택한 기록으로 신고서 만들기</button></span>
+    </div>` : ''}
     <div class="list">
       ${!S.loaded.records ? '<div class="empty">불러오는 중…</div>' : list.length ? list.map(recordRow).join('') : '<div class="empty">기록이 없습니다.</div>'}
     </div>`;
@@ -489,13 +495,19 @@ function renderRecords(body) {
   $('fTodo').onchange = e => { S.todoOnly = e.target.checked; render(); };
   $('btnNewRec').onclick = () => openRecord(null);
   $('btnBulk')?.addEventListener('click', () => makeGroups(groups));
+  $('btnSelClear')?.addEventListener('click', () => { S.recSel.clear(); render(); });
+  $('btnSelMake')?.addEventListener('click', makeFromSelection);
   body.querySelectorAll('.row[data-id]').forEach(row => {
     const id = row.dataset.id;
     row.onclick = e => {
-      if (e.target.closest('button')) return;
+      if (e.target.closest('button, input')) return;
       const r = S.records.find(x => x.id === id);
       WIDE.matches ? focusRecord(r) : openRecord(r);
     };
+    row.querySelector('[data-sel]')?.addEventListener('change', e => {
+      if (e.target.checked) S.recSel.add(id); else S.recSel.delete(id);
+      render();
+    });
     row.ondblclick = () => { if (WIDE.matches) openRecord(S.records.find(r => r.id === id)); };
     row.querySelector('[data-neis]')?.addEventListener('click', () => {
       const r = S.records.find(x => x.id === id);
@@ -521,6 +533,8 @@ function recordRow(r) {
     : r.reportId && S.reports.some(p => p.id === r.reportId)
       ? `<button class="chip ok" data-report title="신고서 열기"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 ✓</button>`
       : '<button class="chip todo" data-report title="이 기록(이어진 기록 포함)으로 신고서 작성"><svg width="12" height="12"><use href="#ic-doc"/></svg>신고서 작성</button>';
+  const selBox = needsReport(r.cause) && !r.reportId
+    ? `<input type="checkbox" data-sel title="신고서 한 장으로 묶을 기록 선택" ${S.recSel.has(r.id) ? 'checked' : ''}>` : '';
   const docsChip = r.docs?.length
     ? `<button class="chip ${r.docsIn ? 'ok' : 'todo'}" data-docs title="눌러서 제출 여부 바꾸기">${r.docsIn ? '서류 ✓' : '서류 미제출'}</button>` : '';
   return `
@@ -530,7 +544,7 @@ function recordRow(r) {
         <div class="who">${r.no}번 ${esc(r.name)} <span class="chip c-${esc(r.cause)}">${esc(typeLabel(r))}</span> <span class="hint">${esc(detail)}</span></div>
         <div class="sub">${esc(r.reason || '사유 없음')}${r.docs?.length ? ' · ' + esc(r.docs.join(', ')) : ''}${r.memo ? ' · ' + esc(r.memo) : ''}</div>
       </div>
-      <div class="flags">${docsChip}${reportChip}
+      <div class="flags">${selBox}${docsChip}${reportChip}
         <button class="chip ${r.neis ? 'ok' : ''}" data-neis title="눌러서 나이스 입력 여부 바꾸기">${r.neis ? '나이스 ✓' : '나이스 미입력'}</button>
       </div>
     </div>`;
@@ -704,9 +718,10 @@ function openRecord(existing) {
       if (rec.kind === '결석' && (rec.days === '' || rec.days == null)) rec.days = countSchoolDays(rec.start, rec.end, offDays());
       try {
         const id = await store.saveRecord(S.cls.id, rec);
+        const synced = await syncReportFromRecord({ ...rec, id });
         closeModal();
         const moved = showMonthOf(rec.start, rec.end, rec.no);
-        toast(moved ? `저장했습니다. ${moved}` : '저장했습니다.');
+        toast((synced ? '저장했습니다. 연결된 신고서도 맞췄습니다.' : '저장했습니다.') + (moved ? ` ${moved}` : ''));
         if (thenReport) editForRecord({ ...rec, id });
       } catch (e) { fail(e); }
     };
@@ -716,6 +731,20 @@ function openRecord(existing) {
   }
 
   draw();
+}
+
+/** 기록을 고쳤을 때 연결된 신고서의 구분·기간·사유를 기록에 맞춘다. 맞췄으면 true. */
+async function syncReportFromRecord(rec) {
+  const rep = rec.reportId && S.reports.find(p => p.id === rec.reportId);
+  if (!rep) return false;
+  const ids = new Set(rep.recordIds || []);
+  const recs = S.records.filter(x => ids.has(x.id) && x.id !== rec.id).concat(rec.id && ids.has(rec.id) ? [rec] : []);
+  if (!recs.length) return false;
+  const student = S.students.find(s => s.no === rep.no);
+  const patch = reportPatchFromRecords(recs, { student, offDays: offDays() });
+  if (!patch) return false;
+  try { await store.saveReport(S.cls.id, { ...rep, ...patch }, rep.recordIds || []); return true; }
+  catch (e) { console.warn(e); return false; }
 }
 
 // ── 신고서 탭 ───────────────────────────────────────
@@ -930,6 +959,17 @@ function editForRecord(rec) {
   render(); // 왼쪽에서 고른 기록 표시
 }
 
+/** 체크한 기록들을 신고서 한 장으로 묶어 편집기를 연다(저장은 편집기에서). */
+function makeFromSelection() {
+  const recs = liveRecords().filter(r => S.recSel.has(r.id) && needsReport(r.cause) && !r.reportId);
+  if (!recs.length) { S.recSel.clear(); return render(); }
+  if (new Set(recs.map(r => r.no)).size > 1) return toast('같은 학생의 기록만 한 장으로 묶을 수 있습니다.');
+  const { report, warnings } = reportFromRecords(recs, { student: byNo(recs[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+  S.recSel.clear();
+  openEditor(report, warnings, { focus: recs[0].id });
+  render();
+}
+
 let making = false;
 /**
  * 밀린 묶음마다 신고서를 만들어 저장한다(기록에 "신고서 ✓"가 붙는다). 출력은 하지 않고
@@ -1024,12 +1064,15 @@ function openEditor(rep, warnings = [], { focus = null } = {}) {
 function drawEditor() {
   const { r } = E;
   const it = r.items;
+  // 기록에서 만든 신고서는 구분·기간·사유를 기록에서만 고친다(저장하면 기록 값으로 다시 맞춰짐)
+  const lock = !!r.recordIds?.length;
+  const dis = lock ? 'disabled' : '';
   const oneRow = (kind, label) => {
     const key = ITEM_KEYS[kind], v = it[key];
     return `<div class="period-row">
-      <label class="check"><input type="checkbox" data-item="${key}" ${v ? 'checked' : ''}>${label}</label>
-      <input class="inp" type="date" data-f="${key}.date" value="${esc(v?.date || '')}" ${v ? '' : 'disabled'}>
-      <input class="inp" data-f="${key}.period" placeholder="${key === 'result' ? '예: 3~4' : '교시'}" maxlength="10" value="${esc(v?.period || '')}" ${v ? '' : 'disabled'}>
+      <label class="check"><input type="checkbox" data-item="${key}" ${v ? 'checked' : ''} ${dis}>${label}</label>
+      <input class="inp" type="date" data-f="${key}.date" value="${esc(v?.date || '')}" ${v && !lock ? '' : 'disabled'}>
+      <input class="inp" data-f="${key}.period" placeholder="${key === 'result' ? '예: 3~4' : '교시'}" maxlength="10" value="${esc(v?.period || '')}" ${v && !lock ? '' : 'disabled'}>
     </div>`;
   };
   const ab = it.absent;
@@ -1045,18 +1088,18 @@ function drawEditor() {
       <section class="zone-sec" data-zone="student"><div class="zone-title">신고서 · 인적사항</div>
         <div class="field"><label>학생</label><select class="inp" id="eNo">${studentOptions(r.no, r.name)}</select></div></section>
       <section class="zone-sec" data-zone="cause"><div class="zone-title">구분 (위 문장 동그라미)</div>
-        <div class="seg" id="eCause">${['출석인정', '질병'].map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}">${k}</button>`).join('')}</div></section>
-      <section class="zone-sec" data-zone="period"><div class="zone-title">1. 기간 <span class="hint">— 체크한 종류에 동그라미가 쳐집니다</span></div>
+        <div class="seg" id="eCause">${['출석인정', '질병'].map(k => `<button data-v="${k}" class="${r.cause === k ? 'on' : ''}" ${dis}>${k}</button>`).join('')}</div></section>
+      <section class="zone-sec" data-zone="period"><div class="zone-title">1. 기간 <span class="hint">— ${lock ? '출결 기록에서 가져옴. 고치려면 출결 기록을 수정하세요' : '체크한 종류에 동그라미가 쳐집니다'}</span></div>
         ${oneRow('지각', '지각')}${oneRow('조퇴', '조퇴')}${oneRow('결과', '결과')}
         <div class="period-row absent">
-          <label class="check"><input type="checkbox" data-item="absent" ${ab ? 'checked' : ''}>결석</label>
-          <input class="inp" type="date" data-f="absent.start" value="${esc(ab?.start || '')}" ${ab ? '' : 'disabled'}>
-          <input class="inp" type="date" data-f="absent.end" min="${esc(ab?.start || '')}" value="${esc(ab?.end || '')}" ${ab ? '' : 'disabled'}>
-          <input class="inp" type="number" min="0" max="400" data-f="absent.days" title="일수" placeholder="결석 일수" value="${esc(ab?.days ?? '')}" ${ab ? '' : 'disabled'}>
+          <label class="check"><input type="checkbox" data-item="absent" ${ab ? 'checked' : ''} ${dis}>결석</label>
+          <input class="inp" type="date" data-f="absent.start" value="${esc(ab?.start || '')}" ${ab && !lock ? '' : 'disabled'}>
+          <input class="inp" type="date" data-f="absent.end" min="${esc(ab?.start || '')}" value="${esc(ab?.end || '')}" ${ab && !lock ? '' : 'disabled'}>
+          <input class="inp" type="number" min="0" max="400" data-f="absent.days" title="일수" placeholder="결석 일수" value="${esc(ab?.days ?? '')}" ${ab && !lock ? '' : 'disabled'}>
         </div>
         <p class="hint" id="eAbsNote" style="margin:0;"></p></section>
-      <section class="zone-sec" data-zone="reason"><div class="zone-title">2. 사유</div>
-        <input class="inp" data-f="reason" maxlength="200" value="${esc(r.reason)}"></section>
+      <section class="zone-sec" data-zone="reason"><div class="zone-title">2. 사유${lock ? ' <span class="hint">— 출결 기록에서 가져옴</span>' : ''}</div>
+        <input class="inp" data-f="reason" maxlength="200" value="${esc(r.reason)}" ${lock ? 'readonly' : ''}></section>
       <section class="zone-sec" data-zone="sign"><div class="zone-title">작성일 · 서명란</div>
         <div class="grid3">
           <div><label class="mini">작성일</label><input class="inp" type="date" data-f="written" value="${esc(r.written)}"></div>

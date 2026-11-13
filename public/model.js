@@ -4,7 +4,7 @@
  * 필드 이름과 허용값은 firestore.rules의 검증과 일치해야 한다.
  * 여기서 바꾸면 규칙도 같이 바꾼다.
  */
-import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=2611100014';
+import { countSchoolDays, nextSchoolDay, today as todayStr } from './dates.js?v=2611130038';
 
 /** 나이스 출결 구분: 4종류 × 4사유 = 16유형 */
 export const KINDS = ['결석', '지각', '조퇴', '결과'];
@@ -168,6 +168,18 @@ export function reportFromRecords(recs, { student, teacherName = '', offDays = [
     r.confirmDate = first?.start || '';
   }
   return { report: r, warnings };
+}
+
+/**
+ * 기록을 고친 뒤, 연결된 신고서에 다시 맞출 값(구분·기간·사유)을 돌려준다.
+ * 작성일·보호자 확인 등 신고서에서 따로 적은 칸은 건드리지 않는다.
+ * 신고서에 넣을 기록이 없으면 null.
+ */
+export function reportPatchFromRecords(recs, opts = {}) {
+  const { report } = reportFromRecords(recs, opts);
+  const it = report.items;
+  if (!it.late && !it.early && !it.result && !it.absent) return null;
+  return { cause: report.cause, items: it, reason: report.reason };
 }
 
 /**

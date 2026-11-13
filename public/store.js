@@ -16,7 +16,7 @@
  *     reports/{자동ID}                       결석신고서
  *   apps/attend/logs/{자동ID}               접속 기록
  */
-import { db, auth } from './firebase-config.js?v=2611100014';
+import { db, auth } from './firebase-config.js?v=2611130038';
 
 const A = 'apps/attend';
 import {
