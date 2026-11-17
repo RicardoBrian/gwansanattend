@@ -11,17 +11,19 @@
  *   apps/attend/requests/{uid}              승인 신청 (학년·반·이름) — 관리자가 승인하면 지워진다
  *   apps/attend/allowed/{email}             사용 허용된 선생님 계정 (승인 또는 관리자 직접 추가)
  *   apps/attend/classes/{연도-학년-반}        반. 담임은 ownerEmail(이메일로 확인 — 프로젝트가 바뀌어도 이어지게)
- *     guardians/{연도-학년-반-번호}           보호자명 (그 반 담임만)
+ *                                           + coEmails: 함께 맡은 담임(특별반 담임 등) 이메일 목록 — 같은 데이터를 본다
+ *     coteachers/{이메일}                    함께 맡은 담임의 이름·도장
+ *     guardians/{연도-학년-반-번호}           보호자명 (그 반 담임들만)
  *     records/{자동ID}                       출결 기록
  *     reports/{자동ID}                       결석신고서
  *   apps/attend/logs/{자동ID}               접속 기록
  */
-import { db, auth } from './firebase-config.js?v=2611130038';
+import { db, auth } from './firebase-config.js?v=2611170738';
 
 const A = 'apps/attend';
 import {
   doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, collection, getDocs,
-  query, where, orderBy, limit, onSnapshot, writeBatch, serverTimestamp,
+  query, where, orderBy, limit, onSnapshot, writeBatch, serverTimestamp, arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   GoogleAuthProvider, signInWithPopup, signInWithRedirect, signOut as fbSignOut, onAuthStateChanged,
@@ -94,7 +96,7 @@ export async function diagnoseAccess(cid) {
     const c = await getDoc(doc(db, `${A}/classes`, cid)).catch(() => null);
     if (!c) return '이 반 정보를 읽을 수 없습니다. 이 반의 담임으로 등록된 계정과 지금 로그인한 계정(' + email + ')이 같은지 관리자에게 확인하세요.';
     if (!c.exists()) return '이 반이 등록 해제되었습니다. 관리자에게 알려 주세요.';
-    if ((c.data().ownerEmail || '').toLowerCase() !== email) return `이 반 담임으로 등록된 계정(${c.data().ownerEmail})과 지금 로그인한 계정(${email})이 다릅니다.`;
+    if (!isMemberOf(c.data(), email)) return `이 반 담임으로 등록된 계정(${[c.data().ownerEmail, ...(c.data().coEmails || [])].join(', ')})에 지금 로그인한 계정(${email})이 없습니다.`;
   }
   return '';
 }
@@ -120,6 +122,12 @@ export async function listLogs(max = 300) {
 export const signOut = () => { stamp.clear(); return fbSignOut(auth); };
 
 const emailOf = user => (user.email || '').toLowerCase();
+
+/** 이 반의 담임(처음 담임 또는 함께 맡은 담임)인지 */
+export const isMemberOf = (c, email) => (c?.ownerEmail || '').toLowerCase() === email || (c?.coEmails || []).includes(email);
+/** 이 반의 처음 담임(관리자 승인으로 반을 만든 선생님)인지 — 담임 이름·도장·학년 말 정리는 이 선생님 것 */
+export const isOwnerOf = (c, email) => (c?.ownerEmail || '').toLowerCase() === email;
+export const myEmail = () => emailOf(auth.currentUser);
 
 /** 이 계정이 허용·관리자인지. 규칙은 자기 이메일 문서만 get 하게 해 준다. */
 export async function checkAccess(user) {
@@ -154,14 +162,26 @@ export function watchRequests(cb, onErr) {
 /**
  * 승인: 허용 목록 등록 + 신청한 반의 담임 지정 + 신청서 삭제를 한 번에.
  * 규칙은 관리자가 신청서 내용 그대로만 반을 만들 수 있게 검사한다.
+ * 이미 담임이 있는 반이면 "함께 맡은 담임"으로 넣는다(특별반 담임 등) — 같은 반 데이터를 함께 본다.
  */
 export async function approveRequest(rq) {
   const id = classIdOf(rq.year, rq.grade, rq.cls);
   const [cls, allowed] = await Promise.all([getDoc(doc(db, `${A}/classes`, id)), getDoc(doc(db, `${A}/allowed`, rq.email))]);
-  if (cls.exists()) throw new Error(`${rq.grade}학년 ${rq.cls}반은 이미 ${cls.data().teacherName || cls.data().ownerEmail} 선생님이 등록했습니다. 먼저 등록 해제하거나 신청을 거절하세요.`);
   const b = writeBatch(db);
   if (!allowed.exists()) {
     b.set(doc(db, `${A}/allowed`, rq.email), { email: rq.email, note: `${rq.grade}-${rq.cls} ${rq.name}`.slice(0, 40), addedAt: serverTimestamp() });
+  }
+  if (cls.exists()) {
+    const c = cls.data();
+    if (isMemberOf(c, rq.email)) throw new Error(`${rq.name} 선생님은 이미 ${rq.grade}학년 ${rq.cls}반 담임입니다. 신청을 거절해 정리하세요.`);
+    if ((c.coEmails || []).length >= 10) throw new Error('한 반에 함께 맡는 담임은 10명까지입니다.');
+    b.set(doc(db, `${A}/classes/${id}/coteachers`, rq.email), {
+      email: rq.email, uid: rq.uid, name: rq.name, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+    });
+    b.update(doc(db, `${A}/classes`, id), { coEmails: arrayUnion(rq.email), updatedAt: serverTimestamp() });
+    b.delete(doc(db, `${A}/requests`, rq.uid));
+    await b.commit();
+    return 'co';
   }
   b.set(doc(db, `${A}/classes`, id), {
     year: rq.year, grade: rq.grade, cls: rq.cls,
@@ -170,6 +190,7 @@ export async function approveRequest(rq) {
   });
   b.delete(doc(db, `${A}/requests`, rq.uid));
   await b.commit();
+  return 'owner';
 }
 
 export const rejectRequest = uid => deleteDoc(doc(db, `${A}/requests`, uid));
@@ -178,11 +199,17 @@ export const rejectRequest = uid => deleteDoc(doc(db, `${A}/requests`, uid));
 
 export const classIdOf = (year, grade, cls) => `${year}-${grade}-${cls}`;
 
+/** 내가 처음 담임인 반 + 함께 맡은 반 */
 export async function myClasses() {
   const email = emailOf(auth.currentUser);
-  const snap = await getDocs(query(collection(db, `${A}/classes`), where('ownerEmail', '==', email)));
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
+  const col = collection(db, `${A}/classes`);
+  const [own, co] = await Promise.all([
+    getDocs(query(col, where('ownerEmail', '==', email))),
+    // 함께 맡은 반: 새 규칙을 게시하기 전이면 거절된다 — 그래도 내 반은 열리게 빈 목록으로
+    getDocs(query(col, where('coEmails', 'array-contains', email))).catch(e => { console.warn('함께 맡은 반 목록 실패', e?.code); return { docs: [] }; }),
+  ]);
+  const byId = new Map([...own.docs, ...co.docs].map(d => [d.id, { id: d.id, ...d.data() }]));
+  return [...byId.values()]
     .sort((a, b) => b.year - a.year || a.grade - b.grade || a.cls - b.cls);
 }
 
@@ -196,6 +223,19 @@ export function updateClass(cid, patch) {
   if ('offDays' in patch) allowed.offDays = patch.offDays;
   if ('stamp' in patch) allowed.stamp = patch.stamp;  // 담임 도장 그림(작은 PNG data URL), 빈 문자열이면 삭제
   return updateDoc(doc(db, `${A}/classes`, cid), { ...allowed, updatedAt: serverTimestamp() });
+}
+
+/** 함께 맡은 담임들(이름·도장) — 같은 반 담임들끼리 본다 */
+export function watchCoteachers(cid, cb, onErr) {
+  return onSnapshot(collection(db, `${A}/classes/${cid}/coteachers`), s => cb(s.docs.map(d => ({ id: d.id, ...d.data() }))), onErr);
+}
+
+/** 함께 맡은 담임 본인의 이름·도장 고치기 */
+export function updateMyCoteacher(cid, patch) {
+  const ok = {};
+  if ('name' in patch) ok.name = patch.name;
+  if ('stamp' in patch) ok.stamp = patch.stamp;
+  return updateDoc(doc(db, `${A}/classes/${cid}/coteachers`, emailOf(auth.currentUser)), { ...ok, updatedAt: serverTimestamp() });
 }
 
 // ── 반 아래 컬렉션 공통 ───────────────────────────────
@@ -377,7 +417,7 @@ export async function deleteReport(cid, r, existingRecordIds) {
  *  명렬표(이름·번호)는 세 앱 공용이라 지우지 않는다 — 학생 관리 사이트에서 관리한다. */
 export async function wipeClass(cid) {
   const ops = [];
-  for (const name of ['guardians', 'records', 'reports']) {
+  for (const name of ['guardians', 'records', 'reports', 'coteachers']) {
     const snap = await getDocs(sub(cid, name));
     snap.docs.forEach(d => ops.push(b => b.delete(d.ref)));
   }
@@ -405,4 +445,25 @@ export async function listAllClasses() {
  * 반 등록 해제. 반 문서만 지우고 명렬표·기록·신고서는 남긴다
  * — 담임이 바뀐 경우 새 담임이 같은 반을 등록하면 그대로 이어받는다.
  */
-export const releaseClass = cid => deleteDoc(doc(db, `${A}/classes`, cid));
+export async function releaseClass(cid) {
+  // 함께 맡은 담임 연결도 같이 끊는다(새 담임이 반을 다시 받으면 처음부터 새로 승인)
+  const co = await getDocs(collection(db, `${A}/classes/${cid}/coteachers`));
+  const b = writeBatch(db);
+  co.docs.forEach(d => b.delete(d.ref));
+  b.delete(doc(db, `${A}/classes`, cid));
+  await b.commit();
+}
+
+export async function listCoteachers(cid) {
+  const snap = await getDocs(collection(db, `${A}/classes/${cid}/coteachers`));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/** 관리자: 함께 맡은 담임 한 명 빼기 */
+export async function removeCoteacher(cid, email) {
+  const c = await getDoc(doc(db, `${A}/classes`, cid));
+  const b = writeBatch(db);
+  b.update(c.ref, { coEmails: (c.data()?.coEmails || []).filter(e => e !== email), updatedAt: serverTimestamp() });
+  b.delete(doc(db, `${A}/classes/${cid}/coteachers`, email));
+  await b.commit();
+}

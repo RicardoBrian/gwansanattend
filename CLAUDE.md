@@ -10,10 +10,11 @@
 - `public/firebase-config.js` Firebase 설정, `theme.css` 공통 디자인 사본.
 
 ## DB — Firebase `gwansan-work` (업무용 통합 프로젝트, 2026-11-09 전환)
-- 출결 데이터: `apps/attend/` 아래 — `allowed/{이메일}`, `requests/{uid}`, `logs`, `classes/{연도-학년-반}`(+ `guardians`, `records`, `reports`).
+- 출결 데이터: `apps/attend/` 아래 — `allowed/{이메일}`, `requests/{uid}`, `logs`, `classes/{연도-학년-반}`(+ `guardians`, `records`, `reports`, `coteachers`).
 - 명렬표(이름·번호): 세 앱 공용 `years/{연도}/students/{연도-학년-반-번호}` — 학생 관리 사이트(students.kakainfo.com)·봉사 앱도 쓴다. 출결 화면에는 `store.js` 가 예전 모양 `{no, name, koName, guardian}` 으로 바꿔 넘긴다.
 - 보호자명: 반 아래 `guardians/{학생ID}` — **그 반 담임만** 읽는다(관리자도 못 봄).
 - 담임 확인은 `ownerEmail`(이메일). uid 는 프로젝트마다 달라서 쓰지 않는다.
+- 한 반에 담임 여럿(특별반 담임 등): 처음 담임은 `ownerEmail`, 함께 맡은 담임은 반 문서 `coEmails`(이메일 목록, 10명까지) + `coteachers/{이메일}`(이름·도장). 같은 반 담임은 학생·기록·신고서·보호자를 똑같이 본다. 이미 담임이 있는 반을 신청 → 관리자 승인하면 함께 맡은 담임이 된다. 함께 맡은 담임은 반 문서에서 재량휴업일만 고치고, 반 삭제(학년 말 정리)는 처음 담임·관리자만. 한 선생님이 여러 반: 반마다 신청(신청서는 한 번에 한 장).
 - 관리자: 공용 `admins/{이메일}`.
 - 규칙: 세 앱 공용 파일 하나 — 원본은 GWVS 레포 `firestore.rules`(사용자 컴퓨터 `~/code/workapps-merge/firestore.rules`, 시험 `rules-test`). 이 레포의 `firestore.rules`·`rules-test/` 는 예전 프로젝트(gwsattend)용으로 남아 있다.
 - 예전 프로젝트 `gwsattend` 는 백업으로 남겨 두었다(지우지 않음). 백업: `~/secrets/backup/2026-11-09-출결-1225/`.

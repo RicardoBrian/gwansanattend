@@ -7,17 +7,17 @@
  * 데이터는 Firestore onSnapshot으로 구독한다. 다른 기기(폰)에서 고친 내용이
  * 새로고침 없이 바로 반영되고, 화면은 "상태 → 다시 그리기" 한 방향으로만 간다.
  */
-import { CONFIGURED } from './firebase-config.js?v=2611130038';
-import * as store from './store.js?v=2611130038';
-import { renderSheet } from './form.js?v=2611130038';
-import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2611130038';
+import { CONFIGURED } from './firebase-config.js?v=2611170738';
+import * as store from './store.js?v=2611170738';
+import { renderSheet } from './form.js?v=2611170738';
+import { decodeCsv, parseRoster, TEMPLATE } from './csv.js?v=2611170738';
 import { nextSchoolDay,
   today, shortLabel, countSchoolDays, offReason, addDays, isDateStr, schoolYearOf, HOLIDAYS, nowHour,
-} from './dates.js?v=2611130038';
+} from './dates.js?v=2611170738';
 import {
   KINDS, ITEM_KEYS, CONFIRM_METHODS,
   needsReport, typeLabel, periodParts, joinPeriod, periodLabel, emptyRecord, normalizeRecord, emptyReport, reportFromRecords, groupForReports, reportPatchFromRecords,
-} from './model.js?v=2611130038';
+} from './model.js?v=2611170738';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -26,6 +26,7 @@ const app = $('app');
 const S = {
   user: null, admin: false,
   classes: [], cls: null,
+  coteachers: [],       // 이 반을 함께 맡은 담임들(이름·도장)
   students: [], records: [], reports: [],
   tab: 'records',
   month: today().slice(0, 7), // 'YYYY-MM' 또는 'all'
@@ -94,6 +95,27 @@ const TYPE_ORDER = ['질병', '출석인정', '미인정', '기타'];
 const studentLabel = s => `${s.no}번 ${s.name}`;
 const byNo = no => S.students.find(s => s.no === no);
 const offDays = () => S.cls?.offDays || [];
+
+// ── 담임 여럿 ──
+// 처음 담임(반을 만든 선생님)의 이름·도장은 반 문서에, 함께 맡은 담임 것은 coteachers 에 있다.
+const me = () => store.myEmail();
+const iAmOwner = () => store.isOwnerOf(S.cls, me());
+const myCo = () => S.coteachers.find(t => t.id === me());
+/** 새 신고서에 들어갈 담임 이름 — 지금 로그인한 선생님 */
+const myTeacherName = () => (iAmOwner() ? S.cls?.teacherName : myCo()?.name) || '';
+/** 이 반 담임 전부 [{ email, name, stamp, owner }] */
+function classTeachers() {
+  const c = S.cls;
+  if (!c) return [];
+  return [{ email: (c.ownerEmail || '').toLowerCase(), name: c.teacherName || '', stamp: c.stamp || '', owner: true },
+    ...S.coteachers.map(t => ({ email: t.id, name: t.name || '', stamp: t.stamp || '', owner: false }))];
+}
+/** 신고서에 찍을 도장: 신고서에 적힌 담임 이름의 도장. 같은 이름이 없으면 지금 선생님 것. */
+function stampFor(teacherName) {
+  const all = classTeachers();
+  const hit = teacherName && all.find(t => t.name === teacherName);
+  return (hit || all.find(t => t.email === me()))?.stamp || '';
+}
 
 function rangeLabel(r) {
   if (r.kind === '결석' && r.end && r.end !== r.start) return `${shortLabel(r.start)}~<br>${shortLabel(r.end)}`;
@@ -264,7 +286,8 @@ function setupForm() {
       <div class="field"><label>반</label><select class="inp" id="suCls">${Array.from({ length: 15 }, (_, i) => opt(i + 1, 1)).join('')}</select></div>
     </div>
     <div class="field"><label>담임 이름 (확인서에 인쇄)</label><input class="inp" id="suName" maxlength="20" placeholder="예: 홍길동"></div>
-    <p class="hint">관리자가 승인하면 그 반의 담임이 됩니다. 한 반은 선생님 한 분만 맡을 수 있고, 담임만 그 반 학생과 출결 기록을 볼 수 있습니다.</p>`;
+    <p class="hint">관리자가 승인하면 그 반의 담임이 됩니다. 이미 담임이 있는 반을 신청하면 <b>함께 맡는 담임</b>(특별반 담임 등)으로 들어가,
+    그 반 학생·출결 기록·신고서를 같이 보고 씁니다. 여러 반을 맡으면 한 반씩 신청하세요. 그 반 담임만 학생과 출결 기록을 볼 수 있습니다.</p>`;
 }
 
 $('classPill').onclick = () => {
@@ -272,7 +295,7 @@ $('classPill').onclick = () => {
     <h2>반 선택</h2>
     <div class="list">${S.classes.map(c => `
       <div class="row" data-cid="${esc(c.id)}" style="grid-template-columns:1fr auto;">
-        <div class="main"><div class="who">${c.year}학년도 ${c.grade}학년 ${c.cls}반</div><div class="sub">${esc(c.teacherName)}</div></div>
+        <div class="main"><div class="who">${c.year}학년도 ${c.grade}학년 ${c.cls}반</div><div class="sub">${esc(c.teacherName)}${store.isOwnerOf(c, me()) ? '' : ' · 함께 맡음'}</div></div>
         <div class="flags">${c.id === S.cls?.id ? '<span class="chip ok">보는 중</span>' : ''}</div>
       </div>`).join('')}</div>
     <h3>새 반 신청 (새 학년도 등)</h3>
@@ -288,7 +311,7 @@ $('classPill').onclick = () => {
     });
     root.querySelector('#mClose').onclick = closeModal;
     root.querySelector('#rqCancel2')?.addEventListener('click', () => store.cancelRequest().then(closeModal).catch(fail));
-    root.querySelector('#suName')?.setAttribute('value', S.cls?.teacherName || '');
+    root.querySelector('#suName')?.setAttribute('value', myTeacherName());
     root.querySelector('#rqGo2')?.addEventListener('click', async e => {
       const v = id => root.querySelector('#' + id).value;
       const name = v('suName').trim();
@@ -313,7 +336,7 @@ function stopWatching() {
 function enterClass(c, tab) {
   stopWatching();
   S.cls = c;
-  S.students = []; S.records = []; S.reports = [];
+  S.students = []; S.records = []; S.reports = []; S.coteachers = [];
   S.loaded = { students: false, records: false, reports: false };
   S.printSel.clear(); S.recSel.clear();
   if (tab) S.tab = tab;
@@ -332,6 +355,7 @@ function enterClass(c, tab) {
       S.cls = data;
       render();
     }, onErr),
+    store.watchCoteachers(c.id, list => { S.coteachers = list; render(); }, onErr),
     store.watchSub(c.id, 'students', list => { S.students = list.sort((a, b) => a.no - b.no); S.loaded.students = true; render(); }, onErr),
     store.watchSub(c.id, 'records', list => { S.records = list; S.loaded.records = true; render(); }, onErr),
     store.watchSub(c.id, 'reports', list => { S.reports = list; S.loaded.reports = true; render(); }, onErr),
@@ -932,7 +956,7 @@ function pickStudentForReport() {
       if (!s) return toast('학생을 선택하세요.');
       closeModal();
       const r = emptyReport();
-      Object.assign(r, { no: s.no, name: s.name, selfName: s.name, guardianName: s.guardian || '', teacherName: S.cls.teacherName || '' });
+      Object.assign(r, { no: s.no, name: s.name, selfName: s.name, guardianName: s.guardian || '', teacherName: myTeacherName() });
       openEditor(r);
     };
   });
@@ -953,7 +977,7 @@ function editForRecord(rec) {
   const all = [...liveRecords().filter(x => x.id !== rec.id), rec];
   const g = groupForReports(all, offDays()).find(x => x.some(r => r.id === rec.id));
   if (!g) return;
-  const { report, warnings } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+  const { report, warnings } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: myTeacherName(), offDays: offDays() });
   if (WIDE.matches && S.tab === 'records') S.focus = rec.id;
   openEditor(report, warnings, { focus: rec.id });
   render(); // 왼쪽에서 고른 기록 표시
@@ -964,7 +988,7 @@ function makeFromSelection() {
   const recs = liveRecords().filter(r => S.recSel.has(r.id) && needsReport(r.cause) && !r.reportId);
   if (!recs.length) { S.recSel.clear(); return render(); }
   if (new Set(recs.map(r => r.no)).size > 1) return toast('같은 학생의 기록만 한 장으로 묶을 수 있습니다.');
-  const { report, warnings } = reportFromRecords(recs, { student: byNo(recs[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+  const { report, warnings } = reportFromRecords(recs, { student: byNo(recs[0].no), teacherName: myTeacherName(), offDays: offDays() });
   S.recSel.clear();
   openEditor(report, warnings, { focus: recs[0].id });
   render();
@@ -983,7 +1007,7 @@ async function makeGroups(groups) {
   try {
     S.printSel.clear();
     for (const g of groups) {
-      const { report } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: S.cls.teacherName || '', offDays: offDays() });
+      const { report } = reportFromRecords(g, { student: byNo(g[0].no), teacherName: myTeacherName(), offDays: offDays() });
       S.printSel.add(await store.saveReport(S.cls.id, report, []));
     }
     toast(`신고서 ${groups.length}장을 만들었습니다. 작성일 등을 확인한 뒤 출력하세요.`);
@@ -1234,9 +1258,9 @@ function sheetData(r) {
 
 /** 한컴돋움이 있으면 원본과 같은 점(․)을 쓴다 */
 let sheetOptsCache = null;
-function sheetOpts() {
+function sheetOpts(r) {
   sheetOptsCache ||= { haansoftDotum: hasFont('한컴돋움') || hasFont('Haansoft Dotum') };
-  return { ...sheetOptsCache, stamp: S.cls?.stamp || '' };
+  return { ...sheetOptsCache, stamp: stampFor(r?.teacherName) };
 }
 
 let resizeBound = false;
@@ -1244,7 +1268,7 @@ function updatePreview() {
   if (!E) return;
   const box = $('ePrevBox'), prev = $('ePrev');
   if (!box) return;
-  prev.innerHTML = renderSheet(sheetData(E.r), sheetOpts());
+  prev.innerHTML = renderSheet(sheetData(E.r), sheetOpts(E.r));
   const scale = Math.min(1, box.clientWidth / 794);
   prev.style.transform = `scale(${scale})`;
   prev.style.width = '794px';
@@ -1390,7 +1414,7 @@ async function printReports(list) {
   const area = $('printArea');
   // 첨부 줄나눔이 글자 폭을 재므로 글꼴이 준비된 뒤에 그린다
   try { await document.fonts.ready; } catch {}
-  area.innerHTML = list.map(p => renderSheet(sheetData(p), sheetOpts())).join('');
+  area.innerHTML = list.map(p => renderSheet(sheetData(p), sheetOpts(p))).join('');
   const clear = () => { area.innerHTML = ''; window.removeEventListener('afterprint', clear); };
   window.addEventListener('afterprint', clear);
   setTimeout(() => window.print(), 50);
@@ -1523,24 +1547,33 @@ async function stampFromImage(file) {
 
 function renderSettings(body) {
   const c = S.cls;
+  const owner = iAmOwner();
+  // 이름·도장: 처음 담임은 반 문서, 함께 맡은 담임은 자기 coteachers 문서
+  const mine = owner ? { name: c.teacherName || '', stamp: c.stamp || '' } : { name: myCo()?.name || '', stamp: myCo()?.stamp || '' };
+  const saveMine = patch => owner
+    ? store.updateClass(c.id, { ...('name' in patch ? { teacherName: patch.name } : {}), ...('stamp' in patch ? { stamp: patch.stamp } : {}) })
+    : store.updateMyCoteacher(c.id, patch);
   const off = [...offDays()].sort((a, b) => a.date.localeCompare(b.date));
   const yearHolidays = Object.entries(HOLIDAYS).filter(([d]) => schoolYearOf(d) === c.year);
   body.innerHTML = `
     <div class="card">
       <h2>${c.year}학년도 ${c.grade}학년 ${c.cls}반</h2>
-      <div class="field"><label>담임 이름 (확인서에 인쇄)</label>
-        <div class="inline"><input class="inp" id="tName" maxlength="20" value="${esc(c.teacherName)}"><button class="btn sm accent" id="tSave">저장</button></div></div>
+      <div class="field"><label>내 이름 (확인서 담임 칸에 인쇄)</label>
+        <div class="inline"><input class="inp" id="tName" maxlength="20" value="${esc(mine.name)}"><button class="btn sm accent" id="tSave">저장</button></div></div>
+      <div class="field"><label>이 반 담임</label>
+        <p class="hint">${classTeachers().map(t => `${esc(t.name || t.email)}${t.owner ? ' (처음 담임)' : ''}${t.email === me() ? ' · 나' : ''}`).join('<br>')}</p>
+        <p class="hint">같은 반 담임끼리는 학생·출결 기록·신고서를 함께 보고 고칩니다. 담임 추가·빼기는 관리자가 합니다(추가는 그 선생님이 이 반을 신청 → 승인).</p></div>
     </div>
 
     <div class="card">
-      <h2>담임 도장</h2>
-      <p class="hint">도장 사진을 올리면 신고서 담임 <b>(인)</b> 자리에 찍힙니다. 흰 종이에 찍은 도장 사진이면 배경은 자동으로 투명해집니다.
+      <h2>내 도장</h2>
+      <p class="hint">도장 사진을 올리면 신고서 담임 <b>(인)</b> 자리에 찍힙니다. 신고서 담임 칸에 적힌 이름의 선생님 도장이 찍힙니다. 흰 종이에 찍은 도장 사진이면 배경은 자동으로 투명해집니다.
       본인·보호자 서명란은 직접 서명하도록 비워 둡니다.</p>
       <div class="inline" style="margin-top:10px;align-items:center;gap:12px;">
-        ${c.stamp ? `<img src="${esc(c.stamp)}" alt="도장" style="width:64px;height:64px;object-fit:contain;background:#fff;border:1px solid var(--border-card);border-radius:8px;">` : '<span class="hint">아직 없음</span>'}
+        ${mine.stamp ? `<img src="${esc(mine.stamp)}" alt="도장" style="width:64px;height:64px;object-fit:contain;background:#fff;border:1px solid var(--border-card);border-radius:8px;">` : '<span class="hint">아직 없음</span>'}
         <input type="file" id="stampFile" accept="image/*" hidden>
-        <button class="btn sm accent" id="stampPick">${c.stamp ? '다시 올리기' : '도장 사진 올리기'}</button>
-        ${c.stamp ? '<button class="btn sm ghost" id="stampDel">지우기</button>' : ''}
+        <button class="btn sm accent" id="stampPick">${mine.stamp ? '다시 올리기' : '도장 사진 올리기'}</button>
+        ${mine.stamp ? '<button class="btn sm ghost" id="stampDel">지우기</button>' : ''}
       </div>
     </div>
 
@@ -1560,14 +1593,14 @@ function renderSettings(body) {
         <p class="hint">${yearHolidays.map(([d, n]) => `${shortLabel(d)} ${esc(n)}`).join(' · ')}</p></details>
     </div>
 
-    <div class="card">
+    ${owner ? `<div class="card">
       <h2>학년 말 정리</h2>
-      <p class="hint">이 반의 명렬표·출결 기록·신고서를 모두 지우고 반 등록도 해제합니다. 되돌릴 수 없습니다.
+      <p class="hint">이 반의 명렬표·출결 기록·신고서를 모두 지우고 반 등록도 해제합니다(함께 맡은 담임 연결도 끊깁니다). 되돌릴 수 없습니다.
       필요한 신고서는 먼저 출력해 두세요.</p>
       <button class="btn danger" id="wipe">이 반 데이터 모두 삭제</button>
-    </div>`;
+    </div>` : ''}`;
 
-  $('tSave').onclick = () => store.updateClass(c.id, { teacherName: $('tName').value.trim() }).then(() => toast('저장했습니다.')).catch(fail);
+  $('tSave').onclick = () => saveMine({ name: $('tName').value.trim() }).then(() => toast('저장했습니다.')).catch(fail);
   $('stampPick').onclick = () => $('stampFile').click();
   $('stampFile').onchange = async e => {
     const f = e.target.files[0];
@@ -1575,11 +1608,11 @@ function renderSettings(body) {
     if (!f) return;
     try {
       const stamp = await stampFromImage(f);
-      await store.updateClass(c.id, { stamp });
+      await saveMine({ stamp });
       toast('도장을 저장했습니다. 신고서 담임 (인) 자리에 찍힙니다.');
     } catch (err) { err?.code ? fail(err) : toast(err?.message || '사진을 읽지 못했습니다.'); }
   };
-  $('stampDel')?.addEventListener('click', () => store.updateClass(c.id, { stamp: '' }).then(() => toast('도장을 지웠습니다.')).catch(fail));
+  $('stampDel')?.addEventListener('click', () => saveMine({ stamp: '' }).then(() => toast('도장을 지웠습니다.')).catch(fail));
   $('oAdd').onclick = () => {
     const start = $('oStart').value, end = $('oEnd').value || start, label = $('oLabel').value.trim() || '재량휴업일';
     if (!isDateStr(start) || !isDateStr(end) || end < start) return toast('날짜를 확인하세요.');
@@ -1595,7 +1628,7 @@ function renderSettings(body) {
   };
   body.querySelectorAll('[data-del]').forEach(b => b.onclick = () =>
     store.updateClass(c.id, { offDays: offDays().filter(o => o.date !== b.dataset.del) }).catch(fail));
-  $('wipe').onclick = async () => {
+  if ($('wipe')) $('wipe').onclick = async () => {
     const typed = prompt(`정말 삭제하려면 "${c.grade}학년 ${c.cls}반 삭제" 라고 입력하세요.`);
     if (typed !== `${c.grade}학년 ${c.cls}반 삭제`) return;
     try {
@@ -1621,6 +1654,11 @@ async function renderAdmin(body) {
   let allowed, classes, logs;
   try {
     [allowed, classes] = await Promise.all([store.listAllowed(), store.listAllClasses()]);
+    // 함께 맡은 담임 이름(있는 반만)
+    await Promise.all(classes.filter(c => c.coEmails?.length).map(async c => {
+      const names = new Map((await store.listCoteachers(c.id).catch(() => [])).map(t => [t.id, t.name]));
+      c.co = c.coEmails.map(e => ({ email: e, name: names.get(e) || '' }));
+    }));
     logs = await store.listLogs().catch(() => null);  // 규칙을 아직 게시하지 않았으면 null
   }
   catch (e) { fail(e); body.innerHTML = '<div class="empty">불러오지 못했습니다.</div>'; return; }
@@ -1634,10 +1672,11 @@ async function renderAdmin(body) {
       ${S.requests.length ? `<table class="tbl"><thead><tr><th>신청한 반</th><th>이름</th><th>계정</th><th></th></tr></thead><tbody>
         ${S.requests.map(rq => {
           const t = taken.get(`${rq.year}-${rq.grade}-${rq.cls}`);
-          return `<tr><td>${rq.year} ${rq.grade}-${rq.cls}${t ? `<br><span class="hint warn">이미 ${esc(t.teacherName || t.ownerEmail)} 선생님 반</span>` : ''}</td>
+          const already = t && store.isMemberOf(t, rq.email);
+          return `<tr><td>${rq.year} ${rq.grade}-${rq.cls}${t ? `<br><span class="hint warn">${already ? '이미 이 반 담임입니다' : `이미 ${esc(t.teacherName || t.ownerEmail)} 선생님 반 — 승인하면 함께 맡습니다`}</span>` : ''}</td>
             <td>${esc(rq.name)}</td><td class="hint">${esc(rq.email)}</td>
             <td style="text-align:right;white-space:nowrap;"><button class="btn sm ghost" data-reject="${esc(rq.uid)}">거절</button>
-            <button class="btn sm accent" data-approve="${esc(rq.uid)}" ${t ? 'disabled' : ''}>승인</button></td></tr>`;
+            <button class="btn sm accent" data-approve="${esc(rq.uid)}" ${already ? 'disabled' : ''}>${t ? '함께 담임으로 승인' : '승인'}</button></td></tr>`;
         }).join('')}</tbody></table>`
       : '<p class="hint">대기 중인 신청이 없습니다. 선생님이 로그인해서 학년·반을 적고 신청하면 여기에 뜹니다.</p>'}
     </div>
@@ -1650,11 +1689,14 @@ async function renderAdmin(body) {
     </div>
     <div class="card">
       <h2>등록된 반 (${classes.length})</h2>
-      <p class="hint"><b>어느 반을 누가 맡았나</b>(반↔담임 계정). 선생님이 신청하고 승인하면 위 명단과 이 목록에 같이 올라갑니다. "등록 해제"는 담임 연결만 끊습니다. 명렬표·기록·신고서는 남아서, 그 반으로 새로 승인받는 선생님이 이어받습니다(담임 교체용).
+      <p class="hint"><b>어느 반을 누가 맡았나</b>(반↔담임 계정). 선생님이 신청하고 승인하면 위 명단과 이 목록에 같이 올라갑니다.
+      이미 담임이 있는 반에 신청이 오면 <b>함께 맡는 담임</b>으로 들어가 같은 데이터를 봅니다(특별반 담임 등). "빼기"는 그 선생님만 이 반에서 뺍니다. "등록 해제"는 담임 연결(함께 맡은 담임 포함)만 끊습니다. 명렬표·기록·신고서는 남아서, 그 반으로 새로 승인받는 선생님이 이어받습니다(담임 교체용).
       관리자도 학생 정보는 볼 수 없습니다.</p>
       <table class="tbl" style="margin-top:8px;"><thead><tr><th>반</th><th>담임</th><th>계정</th><th></th></tr></thead><tbody>
         ${classes.map(c => `<tr><td>${c.year} ${c.grade}-${c.cls}</td><td>${esc(c.teacherName)}</td><td class="hint">${esc(c.ownerEmail)}</td>
-          <td style="text-align:right;"><button class="btn sm ghost" data-rel="${esc(c.id)}">등록 해제</button></td></tr>`).join('') || '<tr><td class="hint">없음</td></tr>'}
+          <td style="text-align:right;"><button class="btn sm ghost" data-rel="${esc(c.id)}">등록 해제</button></td></tr>
+          ${(c.co || []).map(t => `<tr><td></td><td>↳ ${esc(t.name || '(이름 없음)')} <span class="hint">함께</span></td><td class="hint">${esc(t.email)}</td>
+            <td style="text-align:right;"><button class="btn sm ghost" data-unco="${esc(c.id)}" data-email="${esc(t.email)}">빼기</button></td></tr>`).join('')}`).join('') || '<tr><td class="hint">없음</td></tr>'}
       </tbody></table>
     </div>
     <div class="card">
@@ -1682,7 +1724,11 @@ async function renderAdmin(body) {
     const rq = S.requests.find(x => x.uid === b.dataset.approve);
     if (!rq) return;
     b.disabled = true;
-    try { await store.approveRequest(rq); toast(`${rq.name} 선생님(${rq.grade}-${rq.cls})을 승인했습니다.`); render(); }
+    try {
+      const how = await store.approveRequest(rq);
+      toast(`${rq.name} 선생님(${rq.grade}-${rq.cls})을 ${how === 'co' ? '함께 맡는 담임으로 ' : ''}승인했습니다.`);
+      render();
+    }
     catch (e) { fail(e); b.disabled = false; }
   });
   body.querySelectorAll('[data-reject]').forEach(b => b.onclick = async () => {
@@ -1694,6 +1740,10 @@ async function renderAdmin(body) {
   body.querySelectorAll('[data-rm]').forEach(b => b.onclick = async () => {
     if (!confirm(`${b.dataset.rm} 계정의 사용 허용을 해제할까요?`)) return;
     try { await store.removeAllowed(b.dataset.rm); render(); } catch (e) { fail(e); }
+  });
+  body.querySelectorAll('[data-unco]').forEach(b => b.onclick = async () => {
+    if (!confirm(`${b.dataset.email} 선생님을 ${b.dataset.unco} 반에서 뺄까요? 그 반 학생·기록을 더 볼 수 없게 됩니다(기록은 남습니다).`)) return;
+    try { await store.removeCoteacher(b.dataset.unco, b.dataset.email); render(); } catch (e) { fail(e); }
   });
   body.querySelectorAll('[data-rel]').forEach(b => b.onclick = async () => {
     if (!confirm(`${b.dataset.rel} 반의 담임 등록을 해제할까요?`)) return;
